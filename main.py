@@ -99,6 +99,7 @@ class LM_GNN():
         self.evaluator = None
         self.optimizer = None
         self.criterion = None
+        self.whole_graph = False
         
         self.model_lm = None
         self.model_gnn = None
@@ -135,6 +136,7 @@ class LM_GNN():
         return torch.mean(y)
     
     def custom_eval_loss(self, labels, x1, x2 = None, label_smoothing_factor = 0):
+        # 与train_loss一样，实现方法不同
         y = F.cross_entropy(x1, labels[:, 0], reduction="none", label_smoothing=label_smoothing_factor)
         y = torch.log(self.epsilon + y) - math.log(self.epsilon)
         # if x2 != None: 
@@ -143,6 +145,7 @@ class LM_GNN():
         return torch.mean(y)
     
     def cal_labels(self, length, labels, idx):
+        '''label编码'''
         onehot = torch.zeros([length, self.n_classes], device=self.device, 
                             #  dtype=torch.float16 if self.args.fp16 else torch.float32
                             )
@@ -151,13 +154,15 @@ class LM_GNN():
         return onehot
     
     def prepare(self):
+        '''device, scaler, criterion'''
         if self.args.cpu:
             self.device = torch.device("cpu")
         else:
             self.device = torch.device(f"cuda:{self.args.gpu}")
-        self.labels, self.val_idx, self.test_idx = map(
-        lambda x: x.to(self.device), (self.labels, self.val_idx, self.test_idx)
-    )
+        # self.labels, self.val_idx, self.test_idx = map(
+        # lambda x: x.to(self.device), (self.labels, self.val_idx, self.test_idx)
+        # )
+        self.labels = self.labels.to(self.device)
         # if self.feat_static != None:
         #     self.feat_static = self.feat_static.to(self.device)
         # 初始化GradScaler
@@ -165,6 +170,7 @@ class LM_GNN():
         self.criterion = torch.nn.CrossEntropyLoss(label_smoothing=self.args.label_smoothing_factor, reduction ="none")
 
     def adjust_learning_rate(self, epoch, full_ft):
+        '''lr schedule'''
         if epoch <= self.args.warmup:     #TODO: 分层调整
             for i, param_group in enumerate(self.optimizer.param_groups):
                 if self.is_lm[i]:
@@ -188,8 +194,8 @@ class LM_GNN():
         os.makedirs(out_dir,exist_ok=True)
         fname_gnn = os.path.join(out_dir, f"{epoch}_run_{run_num}_gnn.pt")
         torch.save(self.model_gnn.state_dict(), fname_gnn)  
-        fname_lm = os.path.join(out_dir, f"{epoch}_run_{run_num}_lm.pt")
         if self.model_lm:
+            fname_lm = os.path.join(out_dir, f"{epoch}_run_{run_num}_lm.pt")
             torch.save(self.model_lm.state_dict(), fname_lm)  
         
     def save_stat(self, epoch, name):
@@ -215,7 +221,7 @@ class LM_GNN():
             self.switch_to('gnn_lora')     
         # else:
             # self.optimizer = optim.RMSprop(self.get_params(), lr=self.args.gm_lr, weight_decay=self.args.wd)
-            # self.to_device(self.model_gnn)
+        self.to_device(self.model_gnn)
         self.to_device(self.model_lm)
         self.model_gnn.load_state_dict(checkpoint['gnn_dict'],strict=False)
         if self.model_lm: self.model_lm.load_state_dict(checkpoint['lm_dict'])
@@ -240,26 +246,28 @@ class LM_GNN():
         else:
             return params
       
-    def count_params(self):
-        return sum([p['params'].numel() for p in self.get_params()])
+    def count_params(self, grad_only=True):
+        return sum([p['params'].numel() for p in self.get_params(grad_only)])
     
     @lru_cache(8)
-    def id_in_parent(self, parent,sub):
-        if self.args.frozen_padding >= 0:
-            sorted_parent, sorted_indices = torch.sort(parent)
-            sorted_pos = torch.searchsorted(sorted_parent, sub)
-            return sorted_indices[sorted_pos]
-        else:
+    def id_in_parent(self, parent, sub):
+        '''index transformation in subset'''
+        if self.whole_graph:
             return sub
-        
-    @torch.no_grad()
-    def get_static_feat(self):
+        sorted_parent, sorted_indices = torch.sort(parent)
+        sorted_pos = torch.searchsorted(sorted_parent, sub)
+        return sorted_indices[sorted_pos]
+
+    # @torch.no_grad()
+    def get_feat(self, device='cpu', return_cls = False):
         text_loader = DataLoader(self.text_data, batch_size=self.args.batch_size, shuffle=False)
         num_batches = len(text_loader)
         interval = num_batches//10
         feat = torch.empty((self.n_node, self.args.hidden_size), 
                                 dtype=torch.float16 if self.args.fp16 else torch.float32, device=self.device, requires_grad=False)
-        with tqdm(total=num_batches, desc=f'LM ', unit='batch', file=open(os.devnull, 'w')) as pbar:
+        out = torch.empty((self.n_node, self.n_classes),
+                        dtype=torch.float16 if self.args.fp16 else torch.float32, device=self.device)
+        with tqdm(total=num_batches, desc=f'LM inference', unit='batch', file=open(os.devnull, 'w')) as pbar:
         #     with logging_redirect_tqdm():
         # pbar = tqdm(range(num_batches), file=open(os.devnull, 'w'))
             for i, (input_ids, attention_mask) in enumerate(text_loader):
@@ -267,12 +275,13 @@ class LM_GNN():
                 input_ids = input_ids.to(self.device)
                 attention_mask = attention_mask.to(self.device)
                 if self.args.fp16:
-                    with autocast():
-                        
-                            outcls, feat[i*self.args.batch_size:i*self.args.batch_size+input_ids.shape[0],:self.args.hidden_size] \
-                                            = self.model_lm(input_ids,attention_mask,return_hidden=True)
+                    with autocast():    
+                        out[i*self.args.batch_size:i*self.args.batch_size+input_ids.shape[0]], \
+                        feat[i*self.args.batch_size:i*self.args.batch_size+input_ids.shape[0],:self.args.hidden_size] \
+                                        = self.model_lm(input_ids,attention_mask,return_hidden=True)
                 else:
-                    outcls, feat[i*self.args.batch_size:i*self.args.batch_size+input_ids.size[0],:self.args.hidden_size] \
+                    out[i*self.args.batch_size:i*self.args.batch_size+input_ids.shape[0]], \
+                    feat[i*self.args.batch_size:i*self.args.batch_size+input_ids.size[0],:self.args.hidden_size] \
                                         = self.model_lm(input_ids,attention_mask,return_hidden=True)
                 
                 if interval == 0: logger.info(str(pbar))
@@ -280,7 +289,10 @@ class LM_GNN():
                 pbar.update(1)
             torch.cuda.empty_cache()
             gc.collect()
-        return feat.to('cpu')
+        if return_cls:
+            return out, feat.to(device)
+        else:
+            return feat.to(device)
          
     def load_data(self):
         assert self.args.dataset in [
@@ -348,29 +360,30 @@ class LM_GNN():
         return 1
 
     def init_loader(self):
-        # self.train_idx = reorder_nodes_dfs(self.graph, start_node=self.train_idx[0])
-        if self.args.frozen_padding > 0: 
-            sampler = dgl.dataloading.NeighborSampler(
-                [1]+[-1 for _ in range(self.args.frozen_padding)]+[1 for _ in range(self.args.grad_padding)])
-            self.graph_loader = dgl.dataloading.DataLoader(
-                self.graph, self.train_idx, sampler,
-                batch_size=self.args.kernel_size,
-                shuffle=False,
-                drop_last=False,
-                num_workers=4)
-        else:   # 包括frozen_padding=0
-            # if self.args.grad_padding > 0:
-            #     sampler = dgl.dataloading.MultiLayerFullNeighborSampler(self.args.grad_padding)
-            #     batch_size = self.args.kernel_size
-            # elif self.args.grad_padding == 0:
-            sampler = dgl.dataloading.ShaDowKHopSampler([1 for _ in range(self.args.grad_padding)])
-            self.graph_loader = dgl.dataloading.DataLoader(
-                self.graph, self.train_idx, sampler,
-                batch_size=self.args.kernel_size,
-                shuffle=False,
-                drop_last=False,
-                num_workers=4)
-
+        '''dataloader, sampling here'''
+        if self.args.grad_padding > 0:
+            # 控制采样：低->高，1随机一个节点，-1所有节点
+            grad_block = [self.args.grad_k for _ in range(self.args.grad_padding)]
+            if self.args.frozen_padding >= 0: 
+                fz_block = [1]+[-1 for _ in range(self.args.frozen_padding)]
+                sampler = dgl.dataloading.NeighborSampler(fz_block + grad_block)
+                self.graph_loader = dgl.dataloading.DataLoader(
+                    self.graph, self.train_idx, sampler,
+                    batch_size=self.args.kernel_size,
+                    shuffle=False,
+                    drop_last=False,
+                    num_workers=4)
+            else:
+                sampler = dgl.dataloading.ShaDowKHopSampler(grad_block)
+                self.graph_loader = dgl.dataloading.DataLoader(
+                    self.graph, self.train_idx, sampler,
+                    batch_size=self.args.kernel_size,
+                    shuffle=False,
+                    drop_last=False,
+                    num_workers=4)
+        else:
+            # TODO: whole graph
+            self.whole_graph = True
 
     def gen_model(self):
 
@@ -432,7 +445,7 @@ class LM_GNN():
             logger.info("Switched to lm+gnn")
         else:
             logger.info(f"Invalid switch mode: {mode}")
-        logger.info(f"Number of params: {self.count_params()}")
+        logger.info(f"Number of trainable params: {self.count_params()}")
 
     def train(
         self, epoch, evaluator, full_ft, mode="teacher", teacher_output=None
@@ -446,10 +459,14 @@ class LM_GNN():
         alpha = self.args.alpha
         temp = self.args.temp
 
-        # feat = graph.ndata["feat"]  #requires_grand=False
-        if self.feat_static == None:
-            self.feat_static = self.get_static_feat()
-        feat_train = self.feat_static.to(self.device)
+        if full_ft and self.whole_graph:
+            out_lm, feat_train = self.get_feat(self.device, return_cls = True)
+        else:
+            if self.feat_static == None:
+                with torch.no_grad():
+                    self.feat_static = self.get_feat()    
+            feat_train = self.feat_static.to(self.device)
+            
         if self.args.use_labels:
             feat_train = torch.cat([feat_train, 
                               torch.zeros((self.n_node, self.n_classes), 
@@ -461,121 +478,173 @@ class LM_GNN():
                                                             device=self.device)
                                 ,feat_train],
                                 dim=-1)
-        
-        # for 采样相邻节点id kernel_size为train_pred_idx， 扩充grad_padding为grad_idx
-        num_batches = len(self.graph_loader)
-        interval = num_batches//10
-        with tqdm(total=num_batches, desc=f'{epoch}/{self.args.n_epochs} ', unit='batch', file=open(os.devnull, 'w')) as pbar:
-            with self.graph_loader.enable_cpu_affinity():
-                for i, (sub_idx, train_pred_idx, blocks) in enumerate(self.graph_loader):
-                    if self.args.frozen_padding > 0:
-                        graph = dgl.node_subgraph(self.graph, sub_idx, output_device=self.device)
-                        grad_idx = blocks[-1].srcdata['_ID']
-                        feat = feat_train[sub_idx]
-                        train_idx = sub_idx[torch.isin(sub_idx, self.train_idx)]
-                    elif self.args.frozen_padding == 0:
-                        graph = blocks.to(device=self.device)
-                        grad_idx = sub_idx
-                        feat = feat_train[sub_idx]
-                        train_idx = sub_idx[torch.isin(sub_idx, self.train_idx)]
-                    else:
-                        graph = self.graph.to(device=self.device)
-                        feat = feat_train
-                        grad_idx = sub_idx
-                        train_idx = self.train_idx
-                        
-                    if len(grad_idx)>self.args.grad_size:
-                        logger.info(f"grad_idx({len(grad_idx)}) sliced")
-                        grad_idx = grad_idx[:self.args.grad_size]
-                        
-                    self.optimizer.zero_grad()
-                    
-                    # feat = feat.detach()
-                    
-                    if full_ft:
-                        subset = Subset(self.text_data, grad_idx) 
-                        dataloader = DataLoader(subset, batch_size=len(grad_idx))
-                        for _, (input_ids, attention_mask) in enumerate(dataloader):
-                            input_ids = input_ids.to(self.device)
-                            attention_mask = attention_mask.to(self.device)
-                            if self.args.fp16:
-                                with autocast():
-                                    out_lm, embs = self.model_lm(input_ids, attention_mask, return_hidden=True)
-                                # embs = embs.to(torch.float16)
-                                # feat = feat.to(dtype=torch.float32)
+            
+        if not full_ft or self.whole_graph:
+            graph = self.graph.to(device=self.device)
+            self.optimizer.zero_grad()
+            feat_train = feat_train.to(dtype=torch.float32)  
+            if self.args.use_labels:
+                mask = torch.rand(self.train_idx.shape) < self.args.mask_rate
+                train_labels_idx = self.train_idx[mask]
+                train_pred_idx = self.train_idx[~mask]
+            else:
+                mask = torch.rand(self.train_idx.shape) < self.args.mask_rate
+                train_pred_idx = self.train_idx[mask]
+
+            if self.args.n_label_iters > 0:
+                with torch.no_grad():
+                    pred = self.model_gnn(graph, feat_train)
+            else:
+                pred = self.model_gnn(graph, feat_train)
+
+            if self.args.n_label_iters > 0:
+                unlabel_idx = torch.cat([train_pred_idx, self.val_idx, self.test_idx])
+                for _ in range(self.args.n_label_iters):
+                    pred = pred.detach()
+                    torch.cuda.empty_cache()
+                    feat_train[unlabel_idx, -self.n_classes:] = F.softmax(pred[unlabel_idx], dim=-1)
+                    pred = self.model_gnn(graph, feat_train)
+
+            if mode == "teacher":
+                loss = self.custom_train_loss(self.labels[train_pred_idx], pred[train_pred_idx])
+                loss = self.custom_train_loss(self.labels[train_pred_idx], pred[train_pred_idx]) + \
+                                (self.custom_train_loss(self.labels[train_pred_idx], out_lm[train_pred_idx]) if full_ft else 0)
+            elif mode == "student":
+                loss_gt = self.custom_train_loss(self.labels[train_pred_idx], pred[train_pred_idx])
+                loss_kd = loss_kd_only(pred, teacher_output, temp)
+                loss = loss_gt * (1 - alpha) + loss_kd * alpha
+            else:
+                raise Exception("unkown mode")
+
+            if self.args.fp16:
+                self.scaler.scale(loss).backward()
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+            else:
+                loss.backward()
+                self.optimizer.step()
+
+            return evaluator(pred[self.train_idx], self.labels[self.train_idx]), loss.item()
+        # if 0:
+        #     ...
+        else:
+            # 强制使用子图而非全图可直接进入此分支
+            # for 采样相邻节点id kernel_size为train_pred_idx， 扩充grad_padding为grad_idx
+            num_batches = len(self.graph_loader)
+            interval = num_batches//10
+            with tqdm(total=num_batches, desc=f'train {epoch}/{self.args.n_epochs}', unit='batch', file=open(os.devnull, 'w')) as pbar:
+                with self.graph_loader.enable_cpu_affinity():
+                    for i, (sub_idx, train_pred_idx, blocks) in enumerate(self.graph_loader):
+                        if self.args.grad_padding > 0:
+                            if self.args.frozen_padding >= 0:
+                                graph = dgl.node_subgraph(self.graph, sub_idx, output_device=self.device)
+                                # grad_idx = blocks[-self.args.grad_padding:].srcdata['_ID']
+                                grad_idx = torch.cat([block.srcdata['_ID'] for block in blocks[-self.args.grad_padding:]], dim=0)
+                                feat = feat_train[sub_idx]
+                                train_idx = sub_idx[torch.isin(sub_idx, self.train_idx)]
                             else:
-                                out_lm, embs = self.model_lm(input_ids, attention_mask, return_hidden=True)
-                    
-                        torch.cuda.empty_cache()    
-                        gc.collect()
-                    feat = feat.to(dtype=torch.float32)    
-                    # gnn
-                    if self.args.use_labels:
-                        train_labels_idx = set(train_idx.tolist()) - set(train_pred_idx.tolist())
-                        train_labels_idx = torch.tensor(list(train_labels_idx))
-                        onehot_labels = self.cal_labels(self.n_node, self.labels, train_labels_idx)
-                        if len(train_labels_idx):
-                            feat[self.id_in_parent(sub_idx, train_labels_idx),
-                                -self.n_classes:] = onehot_labels[train_labels_idx]
+                                graph = blocks.to(device=self.device)
+                                grad_idx = sub_idx
+                                feat = feat_train[sub_idx]
+                                train_idx = sub_idx[torch.isin(sub_idx, self.train_idx)]
+                        # else:
+                        #     graph = self.graph.to(device=self.device)
+                        #     feat = feat_train
+                        #     grad_idx = sub_idx
+                        #     train_idx = self.train_idx
+                            
+                        if len(grad_idx)>self.args.grad_size:
+                            logger.info(f"grad_idx({len(grad_idx)}) sliced")
+                            grad_idx = grad_idx[:self.args.grad_size]
+                            
+                        self.optimizer.zero_grad()
+                        # feat = feat.detach()
+
                         if full_ft:
-                            embs = torch.cat([embs, onehot_labels[grad_idx]], dim=-1)
-                    
-                    if full_ft:
-                        if self.args.use_gpt_preds:
-                            embs = torch.cat([self.gpt_preds[grad_idx].to(self.device), embs], dim=-1)
+                            subset = Subset(self.text_data, grad_idx) 
+                            dataloader = DataLoader(subset, batch_size=len(grad_idx))
+                            for _, (input_ids, attention_mask) in enumerate(dataloader):
+                                input_ids = input_ids.to(self.device)
+                                attention_mask = attention_mask.to(self.device)
+                                if self.args.fp16:
+                                    with autocast():
+                                        out_lm, embs = self.model_lm(input_ids, attention_mask, return_hidden=True)
+                                    # embs = embs.to(torch.float16)
+                                    # feat = feat.to(dtype=torch.float32)
+                                else:
+                                    out_lm, embs = self.model_lm(input_ids, attention_mask, return_hidden=True)
                         
-                        feat = replace_rows(feat, self.id_in_parent(sub_idx, grad_idx), embs)
+                            torch.cuda.empty_cache()    
+                            gc.collect()
+                        feat = feat.to(dtype=torch.float32)    
+                        
+                        # gnn
+                        if self.args.use_labels:
+                            train_labels_idx = set(train_idx.tolist()) - set(train_pred_idx.tolist())
+                            train_labels_idx = torch.tensor(list(train_labels_idx))
+                            onehot_labels = self.cal_labels(self.n_node, self.labels, train_labels_idx)
+                            if len(train_labels_idx):
+                                feat[self.id_in_parent(sub_idx, train_labels_idx),
+                                    -self.n_classes:] = onehot_labels[train_labels_idx]
+                            if full_ft:
+                                embs = torch.cat([embs, onehot_labels[grad_idx]], dim=-1)
+                        
+                        if full_ft:
+                            if self.args.use_gpt_preds:
+                                embs = torch.cat([self.gpt_preds[grad_idx].to(self.device), embs], dim=-1)
+                            
+                            feat = replace_rows(feat, self.id_in_parent(sub_idx, grad_idx), embs)
 
-                    if self.args.n_label_iters > 0:
-                        with torch.no_grad():
+                        if self.args.n_label_iters > 0:
+                            with torch.no_grad():
+                                pred = self.model_gnn(graph, feat)
+                        else:
+                            # if self.args.fp16:
+                            #     with autocast():
                             pred = self.model_gnn(graph, feat)
-                    else:
-                        # if self.args.fp16:
-                        #     with autocast():
-                        pred = self.model_gnn(graph, feat)
 
-                    if self.args.n_label_iters > 0:
-                        # unlabel_idx = torch.cat([train_pred_idx, self.val_idx, self.test_idx])
-                        unlabel_idx = set(sub_idx.tolist()) - set(train_labels_idx.tolist())
-                        unlabel_idx = torch.tensor(list(unlabel_idx))
-                        for _ in range(self.args.n_label_iters):
-                            pred = pred.detach()    #requires_grad为false, 梯度向前传播到此为止
-                            # torch.cuda.empty_cache()
-                            onehot_labels[unlabel_idx] = F.softmax(
-                                pred[self.id_in_parent(sub_idx, unlabel_idx)], dim=-1)
-                            feat[self.id_in_parent(sub_idx, unlabel_idx), -self.n_classes:] \
-                                = onehot_labels[unlabel_idx]
-                            pred = self.model_gnn(graph, feat)
+                        if self.args.n_label_iters > 0:
+                            # unlabel_idx = torch.cat([train_pred_idx, self.val_idx, self.test_idx])
+                            unlabel_idx = set(sub_idx.tolist()) - set(train_labels_idx.tolist())
+                            unlabel_idx = torch.tensor(list(unlabel_idx))
+                            for _ in range(self.args.n_label_iters):
+                                pred = pred.detach()    #requires_grad为false, 梯度向前传播到此为止
+                                # torch.cuda.empty_cache()
+                                onehot_labels[unlabel_idx] = F.softmax(
+                                    pred[self.id_in_parent(sub_idx, unlabel_idx)], dim=-1)
+                                feat[self.id_in_parent(sub_idx, unlabel_idx), -self.n_classes:] \
+                                    = onehot_labels[unlabel_idx]
+                                pred = self.model_gnn(graph, feat)
 
-                    if mode == "teacher":
-                        loss = self.custom_train_loss(
-                            self.labels[train_pred_idx],
-                            pred[self.id_in_parent(sub_idx, train_pred_idx)]
-                            ) + \
-                            (self.custom_train_loss(
-                            self.labels[train_pred_idx],
-                            out_lm[self.id_in_parent(sub_idx, train_pred_idx)] 
-                            ) if full_ft else 0)
-                    elif mode == "student":
-                        loss_gt = self.custom_train_loss(pred[train_pred_idx], self.labels[train_pred_idx])
-                        loss_kd = loss_kd_only(pred, teacher_output, temp)
-                        loss = loss_gt * (1 - alpha) + loss_kd * alpha
-                    else:
-                        raise Exception("unkown mode")
-                    
-                    # torch.cuda.empty_cache()    
-                    # gc.collect()
-                    if self.args.fp16:
-                        self.scaler.scale(loss).backward()
-                        self.scaler.step(self.optimizer)
-                        self.scaler.update()
-                    else:
-                        loss.backward()
-                        self.optimizer.step()
-                    if (i-1) % interval == 0: logger.info(str(pbar))
-                    pbar.update(1)
+                        if mode == "teacher":
+                            loss = self.custom_train_loss(
+                                self.labels[train_pred_idx],
+                                pred[self.id_in_parent(sub_idx, train_pred_idx)]
+                                ) + \
+                                (self.custom_train_loss(
+                                self.labels[train_pred_idx],
+                                out_lm[self.id_in_parent(sub_idx, train_pred_idx)] 
+                                ) if full_ft else 0)
+                        elif mode == "student":
+                            loss_gt = self.custom_train_loss(pred[train_pred_idx], self.labels[train_pred_idx])
+                            loss_kd = loss_kd_only(pred, teacher_output, temp)
+                            loss = loss_gt * (1 - alpha) + loss_kd * alpha
+                        else:
+                            raise Exception("unkown mode")
+                        
+                        # torch.cuda.empty_cache()    
+                        # gc.collect()
+                        if self.args.fp16:
+                            self.scaler.scale(loss).backward()
+                            self.scaler.step(self.optimizer)
+                            self.scaler.update()
+                        else:
+                            loss.backward()
+                            self.optimizer.step()
+                        if (i-1) % interval == 0: logger.info(str(pbar))
+                        pbar.update(1)
 
-        return evaluator(pred[self.id_in_parent(sub_idx, train_idx)], self.labels[train_idx]), loss.item()
+            return evaluator(pred[self.id_in_parent(sub_idx, train_idx)], self.labels[train_idx]), loss.item()
 
 
     @torch.no_grad()
@@ -587,10 +656,14 @@ class LM_GNN():
 
         # feat = graph.ndata["feat"]
         graph = self.graph.to(device=self.device)
-        if full_ft:
-            self.feat_static = self.get_static_feat()
-        # gnn       
-        feat_eval = self.feat_static.to(self.device)
+            
+        if full_ft and self.whole_graph:
+            feat_eval = self.get_feat(self.device)
+        else:
+            if full_ft:
+                self.feat_static = self.get_feat()      
+            feat_eval = self.feat_static.to(self.device)
+            
         if self.args.use_labels:
             onehot_labels = self.cal_labels(self.n_node, self.labels, self.train_idx)
             feat_eval = torch.cat([feat_eval, onehot_labels], dim=-1)
@@ -634,7 +707,7 @@ class LM_GNN():
         if self.args.proceed:
             start_ep = self.load_stat()
         
-        logger.info(f"Number of params: {self.count_params()}")
+        logger.info(f"Number of all params: {self.count_params(grad_only=False)}")
         self.to_device(self.model_gnn)
         self.to_device(self.model_lm)
         
@@ -695,7 +768,7 @@ class LM_GNN():
 
             if epoch == self.args.n_epochs or epoch % self.args.log_every == 0:
                 logger.info(
-                    f"Run: {n_running}/{self.args.n_runs}/{rseed}, Epoch: {epoch}/{self.args.n_epochs}, Average epoch time: {total_time / epoch:.2f}\n"
+                    f"Run: {n_running}/{self.args.n_runs}/{rseed}, Epoch: {epoch}/{self.args.n_epochs}, Average epoch time: {total_time / (epoch-start_ep):.2f}\n"
                     f"Loss: {loss:.4f}, Acc: {acc:.4f}\n"
                     f"Train/Val/Test loss: {train_loss:.4f}/{val_loss:.4f}/{test_loss:.4f}\n"
                     f"Train/Val/Test/Best val/Final test acc: {train_acc:.4f}/{val_acc:.4f}/{test_acc:.4f}/{best_val_acc:.4f}/{final_test_acc:.4f}"
@@ -757,7 +830,8 @@ def main():
     logger.info(test_accs)
     logger.info(f"Average val accuracy: {np.mean(val_accs)} ± {np.std(val_accs)}")
     logger.info(f"Average test accuracy: {np.mean(test_accs)} ± {np.std(test_accs)}")
-    logger.info(f"Number of params: {gbc.count_params()}")
+    logger.info(f"Number of all params: {gbc.count_params(grad_only=False)}")
+    logger.info(f"Number of trainable params: {gbc.count_params()}")
 
 
 if __name__ == "__main__":

@@ -35,13 +35,14 @@ def parse_args():
     parser.add_argument("--fp16", action="store_true", default=False)
     # sampling
     parser.add_argument("--kernel_size", type=int, default=8, help="for trainable node kernel")
-    parser.add_argument("--grad_padding", type=int, default=1, help="padding size for grad scope")
+    parser.add_argument("--grad_padding", type=int, default=1, help="padding hop for grad scope, -1 means whole graph")
+    parser.add_argument("--grad_k", type=int, default=1, help="Number of nodes sampled per hop, -1 means all neighbours")
     parser.add_argument("--grad_size", type=int, default=20, help="Max Grad Size")
-    parser.add_argument("--frozen_padding", type=int, default=1, help="padding size for frozen scope, -1 means all graph")
+    parser.add_argument("--frozen_padding", type=int, default=1, help="padding size for frozen scope, -1 means whole graph")
 
     # GM
     parser.add_argument("--n_label_iters", type=int, default=2, help="number of label iterations")
-    # parser.add_argument("--mask_rate", type=float, default=0.5, help="train mask rate")
+    parser.add_argument("--mask_rate", type=float, default=0.5, help="train mask rate")
     parser.add_argument("--no_attn_dst", action="store_true", help="Don't use attn_dst.")
     parser.add_argument("--use_norm", action="store_true", help="Use symmetrically normalized adjacency matrix.")
     parser.add_argument("--n_layers", type=int, default=2, help="number of layers")
@@ -63,7 +64,7 @@ def parse_args():
     parser.add_argument("--temp", type=float, default=1.0, help="temperature of kd")
     
     # LM    
-    parser.add_argument("--batch_size", type=int, default=200, help="for LM static embedding")
+    parser.add_argument("--batch_size", type=int, default=100, help="for LM static embedding")
     parser.add_argument("--accum_interval", type=int, default=5)    #?
     parser.add_argument(
         "--hidden_dropout_prob",
@@ -129,6 +130,7 @@ def parse_args():
     args = _set_pretrained_repo(args)
     args.save = f"{args.output_dir}/{args.dataset}/{args.model_type}/{args.suffix}"
     os.makedirs(args.save,exist_ok=True)
+    # 可以直接从这里控制：|0 ep从1开始|0 for gnn & 1 for lm+gnn|
     args.ftmask = [0]+([0 for _ in range(args.ep_gm)]+[1 for _ in range(args.ep_full)])*args.ep_blocks+[0]*10+[1]*10
     args.n_epochs = len(args.ftmask)-1
     args.no_attn_dst = True
@@ -137,7 +139,7 @@ def parse_args():
     args.use_labels = True
     args.use_gpt_preds = False
     args.debug = -1
-    # args.proceed = False
+    # args.proceed = True
     args.use_external_feat = False
     args.train_idx_cluster = False
     return args
