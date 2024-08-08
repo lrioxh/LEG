@@ -25,6 +25,8 @@ def parse_args():
     parser.add_argument("--lm_lr", type=float, default=1e-4, help="learning rate for LM")
     parser.add_argument("--wd", type=float, default=1e-5, help="weight decay")    
     parser.add_argument("--warmup", type=int, default=2, help="epochs for warmup")    
+    parser.add_argument("--loss_reduction", type=str, default='mean', help="Specifies the reduction to apply to the loss output")  
+    parser.add_argument("--loss_weight", type=float, default=0.5, help="weight of full loss in the conbined loss")   
     # parser.add_argument(
     #     "--lr_scheduler_type",
     #     type=str,

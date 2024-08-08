@@ -137,7 +137,7 @@ class LM_GNN():
     
     def custom_eval_loss(self, labels, x1, x2 = None, label_smoothing_factor = 0):
         # 与train_loss一样，实现方法不同
-        y = F.cross_entropy(x1, labels[:, 0], reduction="none", label_smoothing=label_smoothing_factor)
+        y = F.cross_entropy(x1, labels[:, 0], reduction=self.args.loss_reduction, label_smoothing=label_smoothing_factor)
         y = torch.log(self.epsilon + y) - math.log(self.epsilon)
         # if x2 != None: 
         #     y2 = F.cross_entropy(x2, labels[:, 0], reduction="none", label_smoothing=label_smoothing_factor)
@@ -163,22 +163,24 @@ class LM_GNN():
         # lambda x: x.to(self.device), (self.labels, self.val_idx, self.test_idx)
         # )
         self.labels = self.labels.to(self.device)
-        # if self.feat_static != None:
-        #     self.feat_static = self.feat_static.to(self.device)
         # 初始化GradScaler
         self.scaler = GradScaler() if self.args.fp16 else None
-        self.criterion = torch.nn.CrossEntropyLoss(label_smoothing=self.args.label_smoothing_factor, reduction ="none")
+        self.criterion = torch.nn.CrossEntropyLoss(label_smoothing=self.args.label_smoothing_factor, reduction =self.args.loss_reduction)
 
     def adjust_learning_rate(self, epoch, full_ft):
         '''lr schedule'''
         if epoch <= self.args.warmup:     #TODO: 分层调整
+            lm_lr = self.args.lm_lr * epoch / self.args.warmup
+            gm_lr = self.args.gm_lr * epoch / self.args.warmup
             for i, param_group in enumerate(self.optimizer.param_groups):
                 if self.is_lm[i]:
-                    lr = self.args.lm_lr
+                    param_group["lr"] = lm_lr
                 else:
-                    lr = self.args.gm_lr
-                param_group["lr"] = lr * epoch / self.args.warmup
-        
+                    param_group["lr"] = gm_lr
+        else:
+            lm_lr = self.optimizer.param_groups[0]["lr"]
+            gm_lr = self.optimizer.param_groups[-1]["lr"]
+        logger.info(f"lm_lr: {lm_lr}, gm_lr: {gm_lr}")
 
     def to_device(self, item):
         if item != None:
@@ -198,7 +200,7 @@ class LM_GNN():
             fname_lm = os.path.join(out_dir, f"{epoch}_run_{run_num}_lm.pt")
             torch.save(self.model_lm.state_dict(), fname_lm)  
         
-    def save_stat(self, epoch, name):
+    def save_stat(self, epoch, full_ft, name):
         out_dir = f"{self.args.save}/ckpt"
         fname = os.path.join(out_dir, f"{name}_stat.pt")
         torch.save({
@@ -207,6 +209,7 @@ class LM_GNN():
             'lm_dict': self.model_lm.state_dict() if self.model_lm else None,
             'optm_dict': self.optimizer.state_dict(),
             'feat_static': self.feat_static,
+            'full_ft': full_ft,
             # 可以添加其他你需要保存的状态
         }, fname)
         logger.info(f"Saving stat ckpt for ep{epoch} ...")
@@ -216,6 +219,7 @@ class LM_GNN():
         fname = os.path.join(out_dir, f"last_stat.pt")
         checkpoint = torch.load(fname, map_location=self.device)
         last_epoch = checkpoint['epoch']  # 从上次结束的epoch开始
+        full_ft = checkpoint['full_ft']  # 从上次结束的epoch开始
         logger.info(f"Loading last ckpt from {fname}, continue after ep{last_epoch}")
         if 0 < self.args.peft_start <= last_epoch:
             self.switch_to('gnn_lora')     
@@ -229,7 +233,7 @@ class LM_GNN():
         self.optimizer.load_state_dict(checkpoint['optm_dict'])
         self.feat_static = checkpoint['feat_static']
         del checkpoint
-        return last_epoch
+        return last_epoch, full_ft
     
     def get_params(self, grad_only = True):
         params = []
@@ -431,12 +435,10 @@ class LM_GNN():
             lora.mark_not_lora_as_trainable(self.model_gnn)
             logger.info("GM switched to backbone")
         elif mode == 'gnn_only':
-            # self.require_grad = [0 for _]
             for i, p in enumerate(self.model_lm.parameters()):
                 if p.requires_grad == True:
                     p.requires_grad = False
                     self.require_grad[i] = 1
-            
             logger.info("Switched to gnn only")
         elif mode == 'full_ft':
             for i, p in enumerate(self.model_lm.parameters()):
@@ -506,9 +508,11 @@ class LM_GNN():
                     pred = self.model_gnn(graph, feat_train)
 
             if mode == "teacher":
-                loss = self.custom_train_loss(self.labels[train_pred_idx], pred[train_pred_idx])
-                loss = self.custom_train_loss(self.labels[train_pred_idx], pred[train_pred_idx]) + \
-                                (self.custom_train_loss(self.labels[train_pred_idx], out_lm[train_pred_idx]) if full_ft else 0)
+                if full_ft:
+                    loss = self.args.loss_weight*self.custom_train_loss(self.labels[train_pred_idx], pred[train_pred_idx]) + \
+                            (1-self.args.loss_weight)*self.custom_train_loss(self.labels[train_pred_idx], out_lm[train_pred_idx])
+                else:
+                    loss = self.custom_train_loss(self.labels[train_pred_idx], pred[train_pred_idx])
             elif mode == "student":
                 loss_gt = self.custom_train_loss(self.labels[train_pred_idx], pred[train_pred_idx])
                 loss_kd = loss_kd_only(pred, teacher_output, temp)
@@ -538,7 +542,6 @@ class LM_GNN():
                         if self.args.grad_padding > 0:
                             if self.args.frozen_padding >= 0:
                                 graph = dgl.node_subgraph(self.graph, sub_idx, output_device=self.device)
-                                # grad_idx = blocks[-self.args.grad_padding:].srcdata['_ID']
                                 grad_idx = torch.cat([block.srcdata['_ID'] for block in blocks[-self.args.grad_padding:]], dim=0)
                                 feat = feat_train[sub_idx]
                                 train_idx = sub_idx[torch.isin(sub_idx, self.train_idx)]
@@ -547,11 +550,6 @@ class LM_GNN():
                                 grad_idx = sub_idx
                                 feat = feat_train[sub_idx]
                                 train_idx = sub_idx[torch.isin(sub_idx, self.train_idx)]
-                        # else:
-                        #     graph = self.graph.to(device=self.device)
-                        #     feat = feat_train
-                        #     grad_idx = sub_idx
-                        #     train_idx = self.train_idx
                             
                         if len(grad_idx)>self.args.grad_size:
                             logger.info(f"grad_idx({len(grad_idx)}) sliced")
@@ -617,14 +615,20 @@ class LM_GNN():
                                 pred = self.model_gnn(graph, feat)
 
                         if mode == "teacher":
-                            loss = self.custom_train_loss(
-                                self.labels[train_pred_idx],
-                                pred[self.id_in_parent(sub_idx, train_pred_idx)]
-                                ) + \
-                                (self.custom_train_loss(
-                                self.labels[train_pred_idx],
-                                out_lm[self.id_in_parent(sub_idx, train_pred_idx)] 
-                                ) if full_ft else 0)
+                            if full_ft:
+                                loss = self.args.loss_weight*self.custom_train_loss(
+                                    self.labels[train_pred_idx],
+                                    pred[self.id_in_parent(sub_idx, train_pred_idx)]
+                                    ) + \
+                                    (1-self.args.loss_weight)*self.custom_train_loss(
+                                    self.labels[train_pred_idx],
+                                    out_lm[self.id_in_parent(sub_idx, train_pred_idx)] 
+                                    )
+                            else:
+                                loss = self.custom_train_loss(
+                                    self.labels[train_pred_idx],
+                                    pred[self.id_in_parent(sub_idx, train_pred_idx)]
+                                    )
                         elif mode == "student":
                             loss_gt = self.custom_train_loss(pred[train_pred_idx], self.labels[train_pred_idx])
                             loss_kd = loss_kd_only(pred, teacher_output, temp)
@@ -704,8 +708,9 @@ class LM_GNN():
         #e5_revgat
         self.gen_model()
         start_ep = 0
+        last_is_full_ft = True
         if self.args.proceed:
-            start_ep = self.load_stat()
+            start_ep, last_is_full_ft = self.load_stat()
         
         logger.info(f"Number of all params: {self.count_params(grad_only=False)}")
         self.to_device(self.model_gnn)
@@ -718,7 +723,6 @@ class LM_GNN():
 
         accs, train_accs, val_accs, test_accs = [], [], [], []
         losses, train_losses, val_losses, test_losses = [], [], [], []
-        last_is_full_ft = True
         for epoch in range(start_ep + 1, self.args.n_epochs + 1):
             
             tic = time.time()
@@ -734,8 +738,12 @@ class LM_GNN():
                 last_is_full_ft = is_full_ft
                 if is_full_ft:
                     self.switch_to('full_ft')
+                    if self.args.peft_start > 0 and epoch>=self.args.peft_start:
+                        self.switch_to('gnn_lora')
                 else:
                     self.switch_to('gnn_only')
+                    if self.args.peft_start > 0 and epoch>=self.args.peft_start:
+                        self.switch_to('gnn_backbone')
             self.adjust_learning_rate(epoch, is_full_ft)
 
             acc, loss = self.train(
@@ -780,7 +788,7 @@ class LM_GNN():
             ):
                 l.append(e)
             
-            self.save_stat(epoch,'last')
+            self.save_stat(epoch,is_full_ft,'last')
 
         logger.info("*" * 50)
         logger.info(f"Best val acc: {best_val_acc}, Final test acc: {final_test_acc}")
