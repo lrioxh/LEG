@@ -39,46 +39,47 @@ class OneIterTrainer(HugTrainer):
 
 
 class Trainer(ABC):
-    def __init__(self, args, data, split_idx, evaluator, **kwargs):
+    def __init__(self, args, data, split_idx, evaluator, model, **kwargs):
         self.args = args
         self.data = data
         self.split_idx = split_idx
         self.evaluator = evaluator
         self.iter = 0
         self.trial = kwargs.get("trial", None)
+        self.model = model
 
-    @property
-    def rank(self):
-        return int(os.environ["RANK"]) if is_dist() else -1
+    # @property
+    # def rank(self):
+    #     return int(os.environ["RANK"]) if is_dist() else -1
 
-    @property
-    def world_size(self):
-        return int(os.environ["WORLD_SIZE"]) if is_dist() else 1
+    # @property
+    # def world_size(self):
+    #     return int(os.environ["WORLD_SIZE"]) if is_dist() else 1
 
-    @property
-    def disable_tqdm(self):
-        return self.args.disable_tqdm or (is_dist() and self.rank > 0)
+    # @property
+    # def disable_tqdm(self):
+    #     return self.args.disable_tqdm or (is_dist() and self.rank > 0)
 
     @property
     def ckpt_path(self):
-        return osp.join(self.args.ckpt_dir, "model.pt")
+        return osp.join(self.args.ckpt_dir, "lm.pt")
 
-    def save_model(self, model: torch.nn.Module, ckpt_path):
-        if self.rank <= 0:
-            torch.save(model.state_dict(), ckpt_path)
-            logger.info("Saved the model to {}".format(ckpt_path))
-        if is_dist():
-            dist.barrier()
+    # def save_model(self, model: torch.nn.Module, ckpt_path):
+    #     if self.rank <= 0:
+    #         torch.save(model.state_dict(), ckpt_path)
+    #         logger.info("Saved lm model to {}".format(ckpt_path))
+    #     if is_dist():
+    #         dist.barrier()
 
     def load_model(self, model: torch.nn.Module, ckpt_path):
         ckpt = torch.load(ckpt_path, map_location="cpu")
         model.load_state_dict(ckpt, strict=False)
 
     def _prepare_model(self):
-        model_class = get_model_class(self.args.model_type, self.args.task_type)
+        model_class = get_model_class(self.args.lm_type, self.args.task_type)
         model = model_class(self.args)
         n_params = sum(p.numel() for p in model.parameters())
-        logger.warning(f"Model: {self.args.model_type}, Num of Params: {n_params}")
+        logger.warning(f"Model: {self.args.lm_type}, Num of Params: {n_params}")
         return model
 
     @abstractmethod
@@ -98,22 +99,22 @@ class Trainer(ABC):
         return metric.compute(predictions=predictions, references=labels)
 
     def inference(self, dataset, embs_path):
-        x_embs_name = f"x_embs.pt"
-        logits_name = f"logits.pt"
-        emb_handler = EmbeddingHandler(embs_path)
-        if self.args.use_cache and emb_handler.has([x_embs_name, logits_name]):
-            x_embs = emb_handler.load(x_embs_name)
-            logits_embs = emb_handler.load(logits_name)
-            if isinstance(x_embs, np.ndarray):
-                x_embs, logits_embs = torch.from_numpy(x_embs), torch.from_numpy(logits_embs)
-        else:
-            eval_output = self.trainer.predict(dataset)
-            logits_embs, x_embs = eval_output.predictions[0], eval_output.predictions[1]
-            logits_embs, x_embs = torch.from_numpy(logits_embs), torch.from_numpy(x_embs)
-            emb_handler.save(x_embs, x_embs_name)   #save embs
-            emb_handler.save(logits_embs, logits_name)
-            logger.info(f"save the logits of {self.args.lm_type} to {osp.join(embs_path, logits_name)}")
-            logger.info(f"save the hidden features of {self.args.lm_type} to {osp.join(embs_path, x_embs_name)}")
+        # x_embs_name = f"x_embs.pt"
+        # logits_name = f"logits.pt"
+        # emb_handler = EmbeddingHandler(embs_path)
+        # if self.args.use_cache and emb_handler.has([x_embs_name, logits_name]):
+        #     x_embs = emb_handler.load(x_embs_name)
+        #     logits_embs = emb_handler.load(logits_name)
+        #     if isinstance(x_embs, np.ndarray):
+        #         x_embs, logits_embs = torch.from_numpy(x_embs), torch.from_numpy(logits_embs)
+        # else:
+        eval_output = self.trainer.predict(dataset)
+        logits_embs, x_embs = eval_output.predictions[0], eval_output.predictions[1]
+        logits_embs, x_embs = torch.from_numpy(logits_embs), torch.from_numpy(x_embs)
+            # emb_handler.save(x_embs, x_embs_name)   #save embs
+            # emb_handler.save(logits_embs, logits_name)
+            # logger.info(f"save the logits of {self.args.lm_type} to {osp.join(embs_path, logits_name)}")
+            # logger.info(f"save the hidden features of {self.args.lm_type} to {osp.join(embs_path, x_embs_name)}")
         return logits_embs, x_embs
 
     def _evaluate(self, logits, y):
@@ -133,7 +134,7 @@ class Trainer(ABC):
         return results
 
     def inference_and_evaluate(self, dataset):
-        embs_path = os.path.join(self.args.output_dir, "cached_embs")
+        embs_path = os.path.join(self.args.save, "cached_embs")
         logits_embs, x_embs = self.inference(dataset, embs_path)    #save embs
         results = self._evaluate(logits_embs, self.data.y)
         logger.critical("".join("{}:{:.4f} ".format(k, v) for k, v in results.items()))
@@ -142,12 +143,12 @@ class Trainer(ABC):
         return logits_embs, x_embs, results  # x_embs is None in GNNTrainer
 
     def train_once(self):
-        if is_dist(): dist.barrier()
+        # if is_dist(): dist.barrier()
         if self.trial is not None:
             self.trainer._hp_search_setup(self.trial)
         train_output = self.trainer.train()
         # save model
-        self.save_model(self.model, self.ckpt_path)
+        # self.save_model(self.model, self.ckpt_path)
         global_step, train_dict = train_output.global_step, train_output.metrics
         train_dict["global_step"] = global_step
         self.trainer.save_metrics("train", train_dict)
@@ -156,11 +157,11 @@ class Trainer(ABC):
         torch.cuda.empty_cache()
 
     def prepare(self):
-        self.model = self._prepare_model()
+        # self.model = self._prepare_model()
         self.train_set, self.valid_set, self.all_set = self._prepare_dataset()
         self.trainer = self._prepare_trainer()
 
-    def train(self, return_value="valid"):
+    def train(self):
         self.prepare()
         assert self.args.mode in ["train", "test"]
         if self.args.mode == "train":
@@ -170,5 +171,5 @@ class Trainer(ABC):
         _, _, results = self.inference_and_evaluate(self.all_set)
         gc.collect()
         torch.cuda.empty_cache()
-        torch.save(self.model.state_dict(), self.ckpt_path)
-        return results["test_acc"], results["valid_acc"]
+        # torch.save(self.model.state_dict(), self.ckpt_path)
+        return results, self.model

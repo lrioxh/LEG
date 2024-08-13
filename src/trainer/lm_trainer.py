@@ -18,7 +18,7 @@ from .trainer import Trainer
 logger = logging.getLogger(__name__)
 
 
-class Dataset(torch.utils.data.Dataset):
+class TextDataset(torch.utils.data.Dataset):
     def __init__(self, input_ids=None, attention_mask=None, labels=None):
         super().__init__()
         self.data = {
@@ -63,47 +63,47 @@ class InnerTrainer(HugTrainer):
 class LMTrainer(Trainer):
     def _get_dataset(self, mode):
         assert mode in ["train", "valid", "test", "all"]
-        dataset = Dataset(self.data.input_ids, self.data.attention_mask, self.data.y)
-        return dataset if mode == "all" else torch.utils.data.Subset(dataset, self.split_idx[mode])
+        # dataset = Dataset(self.data.input_ids, self.data.attention_mask, self.data.y)
+        return self.data if mode == "all" else torch.utils.data.Subset(self.data, self.split_idx[mode])
 
     def _prepare_dataset(self):
         return self._get_dataset("train"), self._get_dataset("valid"), self._get_dataset("all")
 
     def _prepare_trainer(self):
         # prepare training args
-        total_batch_size = self.world_size * self.args.batch_size * self.args.accum_interval
+        total_batch_size = 1* self.args.batch_size_train * self.args.accum_interval
         eval_steps = self.args.eval_patience // total_batch_size
         train_steps = len(self.train_set) // total_batch_size + 1
         warmup_steps = self.args.warmup_ratio * train_steps
         training_args = TrainingArguments(
-            seed=self.args.random_seed,
-            output_dir=self.args.output_dir,
+            seed=self.args.seed,
+            output_dir=self.args.save,
             optim="adamw_torch",
             evaluation_strategy="steps",
             eval_steps=eval_steps,
             save_strategy="steps",
             save_steps=eval_steps,
             # eval_accumulation_steps=10,
-            learning_rate=self.args.lr,
-            weight_decay=self.args.weight_decay,
+            learning_rate=self.args.lm_lr,
+            weight_decay=self.args.wd,
             load_best_model_at_end=True,
             metric_for_best_model="eval_accuracy",
             dataloader_drop_last=True,
             gradient_accumulation_steps=self.args.accum_interval,
-            label_smoothing_factor=self.args.label_smoothing,
+            label_smoothing_factor=self.args.label_smoothing_factor,
             save_total_limit=1,
-            per_device_train_batch_size=self.args.batch_size,
-            per_device_eval_batch_size=self.args.eval_batch_size,
+            per_device_train_batch_size=self.args.batch_size_train,
+            per_device_eval_batch_size=self.args.batch_size_eval,
             warmup_steps=warmup_steps,
             lr_scheduler_type=self.args.lr_scheduler_type,
             disable_tqdm=False,
-            num_train_epochs=self.args.epochs,
-            local_rank=self.rank,
+            num_train_epochs=self.args.wu_lm,
+            # local_rank=self.rank,
             dataloader_num_workers=8,
             ddp_find_unused_parameters=False,
             deepspeed=self.args.deepspeed,
             fp16=self.args.fp16,
-            bf16=self.args.bf16,
+            # bf16=self.args.bf16,
         )
         return InnerTrainer(
             model=self.model,

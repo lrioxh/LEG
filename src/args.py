@@ -5,6 +5,26 @@ import os
 
 logger = logging.getLogger(__name__)
 
+LM_LIST = [
+    "all-roberta-large-v1",
+    "all-mpnet-base-v2",
+    "all-MiniLM-L6-v2",
+    "e5-large",
+    "deberta-v2-xxlarge",
+    "sentence-t5-large",
+    "roberta-large",
+    "instructor-xl",
+    "e5-large-v2",
+]
+GNN_LIST = ["GAMLP", "SAGN", "SIGN", "SGC", "GraphSAGE", "GCN", "MLP"]
+LM_GNN_LIST = ["e5-revgat"]
+
+SAMPLING_GNN_LIST = ["GraphSAGE", "GCN"]
+DECOUPLING_GNN_LIST = ["GAMLP", "SAGN", "SIGN", "SGC"]
+
+LINK_PRED_DATASETS = ["ogbl-citation2"]
+NODE_CLS_DATASETS = ["ogbn-arxiv", "ogbn-products", "ogbn-arxiv-tape"]
+
 def parse_args():
     parser = argparse.ArgumentParser(
         "GAT implementation on ogbn-arxiv", formatter_class=argparse.ArgumentDefaultsHelpFormatter
@@ -15,24 +35,25 @@ def parse_args():
     parser.add_argument("--gpu", type=int, default=0, help="GPU device ID.")
     parser.add_argument("--seed", type=int, default=42, help="seed")
     parser.add_argument("--n_runs", type=int, default=1, help="running times")
-    parser.add_argument("--ep_blocks", type=int, default=2, help="number of epoch blocks")     
-    parser.add_argument("--ep_gm", type=int, default=1, help="number of epochs for GM only in one block")   
-    parser.add_argument("--ep_full", type=int, default=1, help="number of epochs for full tuning in one block")   
+    parser.add_argument("--ep_blocks", type=int, default=3, help="number of epoch blocks")     
+    parser.add_argument("--ep_gm", type=int, default=5, help="number of epochs for GM only in one block")   
+    parser.add_argument("--ep_full", type=int, default=5, help="number of epochs for full tuning in one block")   
     parser.add_argument("--eval_epoch", type=int, default=1) 
     # parser.add_argument("--reuse_epoch", type=int, default=2, help="reuse LM embs every reuse_epoch")
     # parser.add_argument("--sfeat_start", type=int, default=0, help='epoch that start to train with static feat, aka freeze LM')
     parser.add_argument("--gm_lr", type=float, default=1e-3, help="learning rate for GM")
     parser.add_argument("--lm_lr", type=float, default=1e-4, help="learning rate for LM")
     parser.add_argument("--wd", type=float, default=1e-5, help="weight decay")    
-    parser.add_argument("--warmup", type=int, default=2, help="epochs for warmup")    
+    parser.add_argument("--warmup", type=int, default=10, help="epochs for warmup")    
+    parser.add_argument("--wu_lm", type=int, default=1, help="epochs for warmup for LM only")  
     parser.add_argument("--loss_reduction", type=str, default='mean', help="Specifies the reduction to apply to the loss output")  
     parser.add_argument("--loss_weight", type=float, default=0.5, help="weight of full loss in the conbined loss")   
-    # parser.add_argument(
-    #     "--lr_scheduler_type",
-    #     type=str,
-    #     default="linear",
-    #     choices=["linear", "constant"],
-    # )
+    parser.add_argument(
+        "--lr_scheduler_type",
+        type=str,
+        default="linear",
+        choices=["linear", "constant"],
+    )
     parser.add_argument("--label_smoothing_factor", type=float, default=0.01)
     parser.add_argument("--fp16", action="store_true", default=False)
     # sampling
@@ -66,8 +87,10 @@ def parse_args():
     parser.add_argument("--temp", type=float, default=1.0, help="temperature of kd")
     
     # LM    
-    parser.add_argument("--batch_size", type=int, default=100, help="for LM static embedding")
-    parser.add_argument("--accum_interval", type=int, default=5)    #?
+    parser.add_argument("--batch_size_infer", type=int, default=200, help="for LM static embedding")
+    parser.add_argument("--batch_size_train", type=int, default=20, help="for LM static embedding")
+    parser.add_argument("--batch_size_eval", type=int, default=20)
+    parser.add_argument("--accum_interval", type=int, default=5)    #for LM
     parser.add_argument(
         "--hidden_dropout_prob",
         type=float,
@@ -81,11 +104,14 @@ def parse_args():
     parser.add_argument("--num_iterations", type=int, default=4)
     parser.add_argument("--avg_alpha", type=float, default=0.5)
     parser.add_argument("--eval_delay", type=int, default=0)
-    
-    # environment
-    # parser.add_argument(
-    #     "--mode", type=str, default="train", choices=["train", "test", "save_bert_x"]
-    # )
+    parser.add_argument("--use_cache", action="store_true", default=False)
+    # parser.add_argument("--disable_tqdm", action="store_true", default=False)
+    parser.add_argument("--eval_patience", type=int, default=50000)
+    parser.add_argument("--warmup_ratio", type=float, default=0.15)
+    parser.add_argument(
+        "--mode", type=str, default="train", choices=["train", "test", "save_bert_x"]
+    )
+    parser.add_argument("--deepspeed", type=str, default="ds_config.json")
     
     # parameters for data and model storage
     parser.add_argument("--model_type", type=str, default="e5-revgat")
@@ -99,7 +125,7 @@ def parse_args():
     )
     parser.add_argument("--use_gpt_preds", action="store_true", default=False)
     parser.add_argument("--n_gpt_embs", type=int, default=64)
-    parser.add_argument("--use_external_feat", action="store_true", help="use external static features")
+    parser.add_argument("--use_external_feat", action="store_true", default=False, help="use external static features")
     parser.add_argument("--feat_dir", type=str,default="out/ogbn-arxiv/e5-large/main/cached_embs/x_embs.pt", help="path for external static features")
     
     parser.add_argument("--train_idx_cluster", action="store_true", default=False)
@@ -120,7 +146,7 @@ def parse_args():
     )
      
     # peft & lora hyperparams
-    parser.add_argument("--peft_start", type=int, default=15, help='epoch that start to train GM with PEFT')
+    parser.add_argument("--peft_start", type=int, default=31, help='epoch that start to train GM with PEFT')
     parser.add_argument("--use_peft", action="store_true", default=False)
     parser.add_argument("--peft_r", type=int, default=8) #8
     parser.add_argument("--peft_lora_alpha", type=float, default=8)
@@ -139,11 +165,12 @@ def parse_args():
     args.use_peft = True
     args.fp16 = True
     args.use_labels = True
-    args.use_gpt_preds = False
+    # args.use_gpt_preds = True
     args.debug = -1
     # args.proceed = True
-    args.use_external_feat = False
-    args.train_idx_cluster = False
+    # args.use_external_feat = True
+    # args.train_idx_cluster = True
+    args.deepspeed = None
     return args
 
 def save_args(args, dir):

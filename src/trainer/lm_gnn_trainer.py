@@ -213,7 +213,7 @@ class LM_GNN_Trainer(Trainer):
 
     def _prepare_trainer(self): #重写
         # prepare training args
-        total_batch_size = self.world_size * self.args.batch_size * self.args.accum_interval
+        total_batch_size = 1 * self.args.batch_size * self.args.accum_interval
         eval_steps = self.args.eval_patience // total_batch_size
         train_steps = len(self.train_set) // total_batch_size + 1
         warmup_steps = self.args.warmup_ratio * train_steps

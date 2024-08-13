@@ -10,12 +10,12 @@ from ..args import (
 from .gnn_trainer import GNNDecouplingTrainer, GNNSamplingTrainer, MLPTrainer
 from .link_gnn_trainer import LinkGCNTrainer, LinkGNNSamplingTrainer, LinkMLPTrainer
 from .link_lm_trainer import LinkLMTrainer
-from .lm_trainer import LMTrainer
+from .lm_trainer import LMTrainer, TextDataset
 from .lm_gnn_trainer import LM_GNN_Trainer
 
 
-def get_trainer_class(args):
-    model_type, dataset = args.model_type, args.dataset
+def get_trainer_class(model_type, dataset):
+    # model_type, dataset = args.model_type, args.dataset
     if model_type in LM_GNN_LIST and dataset in NODE_CLS_DATASETS:
         return LM_GNN_Trainer
     if model_type in LM_LIST and dataset in LINK_PRED_DATASETS:

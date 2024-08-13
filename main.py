@@ -29,6 +29,7 @@ from src.model.lm_gnn import RevGAT, E5_model
 from src.dataset import load_data_bundle
 from src.args import parse_args, save_args
 import src.lora as lora
+from src.trainer import get_trainer_class, TextDataset
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +94,7 @@ class LM_GNN():
         self.graph = None
         self.graph_loader = None
         self.labels = None
+        self.split_idx = None
         self.train_idx = None
         self.val_idx = None
         self.test_idx = None
@@ -105,6 +107,7 @@ class LM_GNN():
         self.model_gnn = None
         self.is_lm = []
         self.require_grad = []
+        # self.lm_only=False
 
     def reorder_train_idx(self):
         '''邻接重排id'''
@@ -169,6 +172,7 @@ class LM_GNN():
 
     def adjust_learning_rate(self, epoch, full_ft):
         '''lr schedule'''
+        # if not self.lm_only:
         if epoch <= self.args.warmup:     #TODO: 分层调整
             lm_lr = self.args.lm_lr * epoch / self.args.warmup
             gm_lr = self.args.gm_lr * epoch / self.args.warmup
@@ -235,23 +239,37 @@ class LM_GNN():
         del checkpoint
         return last_epoch, full_ft
     
-    def get_params(self, grad_only = True):
+    def get_params(self, init_lr=False, grad_only = True):
         params = []
-        if self.model_lm:
-            lmp = [{'params': p, 'lr': self.args.lm_lr} for p in self.model_lm.parameters()]
-            params += lmp
-            self.is_lm += [1 for _ in range(len(lmp))]
-        if self.model_gnn:
-            gmp = [{'params': p, 'lr': self.args.gm_lr} for p in self.model_gnn.parameters()]
-            params += gmp
-            self.is_lm += [0 for _ in range(len(gmp))]
-        if grad_only:
-            return [p for p in params if p['params'].requires_grad]
+        if init_lr:
+            if self.model_lm:
+                lmp = [{'params': p, 'lr': self.args.lm_lr} for p in self.model_lm.parameters()]
+                params += lmp
+                self.is_lm += [1 for _ in range(len(lmp))]
+            if self.model_gnn:
+                gmp = [{'params': p, 'lr': self.args.gm_lr} for p in self.model_gnn.parameters()]
+                params += gmp
+                self.is_lm += [0 for _ in range(len(gmp))]
+            if grad_only:
+                return [p for p in params if p['params'].requires_grad]
         else:
-            return params
+            if self.model_lm:
+                params += list(self.model_lm.named_parameters())
+            if self.model_gnn:
+                params += list(self.model_gnn.named_parameters())
+            if grad_only:
+                return [(n,p) for (n,p) in params if p.requires_grad]
+        return params
+            
       
     def count_params(self, grad_only=True):
-        return sum([p['params'].numel() for p in self.get_params(grad_only)])
+        return sum([p.numel() for (n,p) in self.get_params(grad_only)])
+    
+    def print_grad_norm(self):
+        for name, param in self.get_params():
+            if param.grad is not None:
+                grad_norm = param.grad.norm().item()
+                logger.info(f"Layer: {name} | Gradient Norm: {grad_norm}")
     
     @lru_cache(8)
     def id_in_parent(self, parent, sub):
@@ -264,7 +282,8 @@ class LM_GNN():
 
     # @torch.no_grad()
     def get_feat(self, device='cpu', return_cls = False):
-        text_loader = DataLoader(self.text_data, batch_size=self.args.batch_size, shuffle=False)
+        batch_size = self.args.batch_size_infer
+        text_loader = DataLoader(self.text_data, batch_size=batch_size, shuffle=False)
         num_batches = len(text_loader)
         interval = num_batches//10
         feat = torch.empty((self.n_node, self.args.hidden_size), 
@@ -280,12 +299,12 @@ class LM_GNN():
                 attention_mask = attention_mask.to(self.device)
                 if self.args.fp16:
                     with autocast():    
-                        out[i*self.args.batch_size:i*self.args.batch_size+input_ids.shape[0]], \
-                        feat[i*self.args.batch_size:i*self.args.batch_size+input_ids.shape[0],:self.args.hidden_size] \
+                        out[i*batch_size:i*batch_size+input_ids.shape[0]], \
+                        feat[i*batch_size:i*batch_size+input_ids.shape[0],:self.args.hidden_size] \
                                         = self.model_lm(input_ids,attention_mask,return_hidden=True)
                 else:
-                    out[i*self.args.batch_size:i*self.args.batch_size+input_ids.shape[0]], \
-                    feat[i*self.args.batch_size:i*self.args.batch_size+input_ids.size[0],:self.args.hidden_size] \
+                    out[i*batch_size:i*batch_size+input_ids.shape[0]], \
+                    feat[i*batch_size:i*batch_size+input_ids.size[0],:self.args.hidden_size] \
                                         = self.model_lm(input_ids,attention_mask,return_hidden=True)
                 
                 if interval == 0: logger.info(str(pbar))
@@ -297,7 +316,16 @@ class LM_GNN():
             return out, feat.to(device)
         else:
             return feat.to(device)
-         
+        
+    def train_lm(self):
+        # trainer
+        Trainer = get_trainer_class(self.args.lm_type,self.args.dataset)
+        trainer = Trainer(self.args, self.text_data, self.split_idx, self.evaluator, self.model_lm)
+        results, self.model_lm = trainer.train()
+        del trainer
+        # return results["train_acc"], results["valid_acc"], results["test_acc"], results["train_loss"], results["valid_loss"], results["test_loss"]
+        return results
+       
     def load_data(self):
         assert self.args.dataset in [
                 "ogbn-arxiv", "ogbl-citation2", "ogbn-products", "ogbn-arxiv-tape"
@@ -305,8 +333,8 @@ class LM_GNN():
         data_graph = DglNodePropPredDataset(name=self.args.dataset, root="../dgl_data")
         self.evaluator = Evaluator(name=self.args.dataset)
         
-        splitted_idx = data_graph.get_idx_split()
-        self.train_idx, self.val_idx, self.test_idx = splitted_idx["train"], splitted_idx["valid"], splitted_idx["test"]
+        self.split_idx = data_graph.get_idx_split()
+        self.train_idx, self.val_idx, self.test_idx = self.split_idx ["train"], self.split_idx ["valid"], self.split_idx ["test"]
         self.graph, self.labels = data_graph[0]
         
         self.n_node = self.graph.num_nodes()
@@ -327,7 +355,7 @@ class LM_GNN():
             if self.args.dataset == "ogbn-arxiv":
                 transform = T.ToUndirected()    #TODO: 加入PE处理有向图
                 text_token = transform(text_token)
-            self.text_data = TensorDataset(text_token.input_ids, text_token.attention_mask) 
+            self.text_data = TextDataset(text_token.input_ids, text_token.attention_mask, self.labels) 
             logger.warning(
                 f"Loaded node tokens of shape=({self.n_node},{text_token.input_ids.shape[1]})")      
         # TODO
@@ -423,11 +451,11 @@ class LM_GNN():
             else:
                 raise Exception("Unknown lm")
             
-        self.optimizer = optim.RMSprop(self.get_params(), lr=self.args.gm_lr, weight_decay=self.args.wd)
+        self.optimizer = optim.RMSprop(self.get_params(init_lr=True), lr=self.args.gm_lr, weight_decay=self.args.wd)
         self.require_grad = [0 for _ in self.model_lm.parameters()]
         return 1
 
-    def switch_to(self, mode: Literal['gnn_lora', 'gnn_backbone', 'gnn_only', 'full_ft']):
+    def switch_to(self, mode: Literal['gnn_lora', 'gnn_backbone', 'gnn_only', 'full_ft','lm_only']):
         if mode=='gnn_lora':
             lora.mark_only_lora_as_trainable(self.model_gnn)
             logger.info("GM switched to LoRA")
@@ -445,6 +473,9 @@ class LM_GNN():
                 if self.require_grad[i]:
                     p.requires_grad = True
             logger.info("Switched to lm+gnn")
+        # elif mode == 'lm_only':
+        #     self.lm_only=True
+        #     logger.info("Switched to lm only")
         else:
             logger.info(f"Invalid switch mode: {mode}")
         logger.info(f"Number of trainable params: {self.count_params()}")
@@ -452,11 +483,12 @@ class LM_GNN():
     def train(
         self, epoch, evaluator, full_ft, mode="teacher", teacher_output=None
     ):
+        
         self.model_gnn.train()
         if self.model_lm: self.model_lm.train()
         
-        if mode == "student":
-            assert teacher_output != None
+        # if mode == "student":
+        #     assert teacher_output != None
 
         alpha = self.args.alpha
         temp = self.args.temp
@@ -513,10 +545,10 @@ class LM_GNN():
                             (1-self.args.loss_weight)*self.custom_train_loss(self.labels[train_pred_idx], out_lm[train_pred_idx])
                 else:
                     loss = self.custom_train_loss(self.labels[train_pred_idx], pred[train_pred_idx])
-            elif mode == "student":
-                loss_gt = self.custom_train_loss(self.labels[train_pred_idx], pred[train_pred_idx])
-                loss_kd = loss_kd_only(pred, teacher_output, temp)
-                loss = loss_gt * (1 - alpha) + loss_kd * alpha
+            # elif mode == "student":
+            #     loss_gt = self.custom_train_loss(self.labels[train_pred_idx], pred[train_pred_idx])
+            #     loss_kd = loss_kd_only(pred, teacher_output, temp)
+            #     loss = loss_gt * (1 - alpha) + loss_kd * alpha
             else:
                 raise Exception("unkown mode")
 
@@ -629,10 +661,10 @@ class LM_GNN():
                                     self.labels[train_pred_idx],
                                     pred[self.id_in_parent(sub_idx, train_pred_idx)]
                                     )
-                        elif mode == "student":
-                            loss_gt = self.custom_train_loss(pred[train_pred_idx], self.labels[train_pred_idx])
-                            loss_kd = loss_kd_only(pred, teacher_output, temp)
-                            loss = loss_gt * (1 - alpha) + loss_kd * alpha
+                        # elif mode == "student":
+                        #     loss_gt = self.custom_train_loss(pred[train_pred_idx], self.labels[train_pred_idx])
+                        #     loss_kd = loss_kd_only(pred, teacher_output, temp)
+                        #     loss = loss_gt * (1 - alpha) + loss_kd * alpha
                         else:
                             raise Exception("unkown mode")
                         
@@ -716,6 +748,9 @@ class LM_GNN():
         self.to_device(self.model_gnn)
         self.to_device(self.model_lm)
         
+        if self.args.wu_lm > 0:
+            self.train_lm()
+
         # training loop
         total_time = 0
         best_val_acc, final_test_acc, best_val_loss = 0, 0, float("inf")
@@ -723,19 +758,25 @@ class LM_GNN():
 
         accs, train_accs, val_accs, test_accs = [], [], [], []
         losses, train_losses, val_losses, test_losses = [], [], [], []
-        for epoch in range(start_ep + 1, self.args.n_epochs + 1):
-            
-            tic = time.time()
-            if mode == "student":
-                teacher_output = torch.load("./{}/best_pred_run{}.pt".format(self.args.kd_dir, n_running)).cpu().cuda()
-            else:
-                teacher_output = None
-                
-            if self.args.peft_start > 0 and self.args.peft_start == epoch:
-                self.switch_to('gnn_lora')    
+        epoch = start_ep + 1
+        while epoch < self.args.n_epochs + 1:
+        # for epoch in range(start_ep + 1, self.args.n_epochs + 1):
+            tic = time.time()         
+            # if mode == "student":
+            #     teacher_output = torch.load("./{}/best_pred_run{}.pt".format(self.args.kd_dir, n_running)).cpu().cuda()
+            # else:
+            #     teacher_output = None
+
+            # if self.lm_only:
+            #     train_acc, val_acc, test_acc, train_loss, val_loss, test_loss = self.train_lm()
+            #     pred = None
+            # else:
             is_full_ft = self.args.ftmask[epoch] and not self.args.use_external_feat   
             if last_is_full_ft != is_full_ft:
                 last_is_full_ft = is_full_ft
+                if epoch != 1:
+                    logger.info("Grad Norm of last stage:")
+                    self.print_grad_norm()
                 if is_full_ft:
                     self.switch_to('full_ft')
                     if self.args.peft_start > 0 and epoch>=self.args.peft_start:
@@ -744,19 +785,20 @@ class LM_GNN():
                     self.switch_to('gnn_only')
                     if self.args.peft_start > 0 and epoch>=self.args.peft_start:
                         self.switch_to('gnn_backbone')
+                        
             self.adjust_learning_rate(epoch, is_full_ft)
-
+            
             acc, loss = self.train(
                 epoch,
                 evaluator_wrapper,
                 is_full_ft,
                 mode=mode,
-                teacher_output=teacher_output,
+                # teacher_output=teacher_output,
             )
 
             train_acc, val_acc, test_acc, train_loss, val_loss, test_loss, pred = \
                                                                 self.evaluate(evaluator_wrapper, is_full_ft)
-
+            
             toc = time.time()
             total_time += toc - tic
 
@@ -769,6 +811,7 @@ class LM_GNN():
                 best_val_acc = val_acc
                 final_test_acc = test_acc
                 final_pred = pred
+                # if not self.lm_only:
                 if mode == "teacher":
                     self.save_pred(final_pred, n_running, self.args.kd_dir)
                 self.save_stat(epoch,f'best{rseed}')
@@ -789,6 +832,10 @@ class LM_GNN():
                 l.append(e)
             
             self.save_stat(epoch,is_full_ft,'last')
+            # if self.lm_only:
+            #     self.lm_only = False
+            # else:
+            epoch+=1
 
         logger.info("*" * 50)
         logger.info(f"Best val acc: {best_val_acc}, Final test acc: {final_test_acc}")
