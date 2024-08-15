@@ -89,6 +89,7 @@ class LM_GNN():
         self.n_classes = 0
         self.device = None
         self.text_data = None
+        self.text_token = None
         self.feat_static = None
         self.gpt_preds = None
         self.graph = None
@@ -320,8 +321,10 @@ class LM_GNN():
     def train_lm(self):
         # trainer
         Trainer = get_trainer_class(self.args.lm_type,self.args.dataset)
-        trainer = Trainer(self.args, self.text_data, self.split_idx, self.evaluator, self.model_lm)
+        trainer = Trainer(self.args, self.text_token, self.split_idx, self.evaluator, self.model_lm)
+        # print(self.get_params()[0])
         results, self.model_lm = trainer.train()
+        # print(self.get_params()[0])
         del trainer
         # return results["train_acc"], results["valid_acc"], results["test_acc"], results["train_loss"], results["valid_loss"], results["test_loss"]
         return results
@@ -333,8 +336,8 @@ class LM_GNN():
         data_graph = DglNodePropPredDataset(name=self.args.dataset, root="../dgl_data")
         self.evaluator = Evaluator(name=self.args.dataset)
         
-        self.split_idx = data_graph.get_idx_split()
-        self.train_idx, self.val_idx, self.test_idx = self.split_idx ["train"], self.split_idx ["valid"], self.split_idx ["test"]
+        split_idx = data_graph.get_idx_split()
+        self.train_idx, self.val_idx, self.test_idx = split_idx ["train"], split_idx ["valid"], split_idx ["test"]
         self.graph, self.labels = data_graph[0]
         
         self.n_node = self.graph.num_nodes()
@@ -347,17 +350,17 @@ class LM_GNN():
             )
         else:
             # text attr
-            text_token, split_idx, evaluator = load_data_bundle(
+            text_token, self.split_idx, evaluator = load_data_bundle(
                 self.args.dataset,
                 root=self.args.data_folder,
                 tokenizer=self.args.pretrained_repo,
                 tokenize=True)
             if self.args.dataset == "ogbn-arxiv":
                 transform = T.ToUndirected()    #TODO: 加入PE处理有向图
-                text_token = transform(text_token)
-            self.text_data = TextDataset(text_token.input_ids, text_token.attention_mask, self.labels) 
+                self.text_token = transform(text_token)
+            self.text_data = TensorDataset(self.text_token.input_ids, self.text_token.attention_mask) 
             logger.warning(
-                f"Loaded node tokens of shape=({self.n_node},{text_token.input_ids.shape[1]})")      
+                f"Loaded node tokens of shape=({self.n_node},{self.text_token.input_ids.shape[1]})")      
         # TODO
         self.args.n_node_feats = self.args.hidden_size
         if self.args.use_gpt_preds:
@@ -384,6 +387,7 @@ class LM_GNN():
             self.labels = self.labels[:self.args.debug]
             self.graph = dgl.node_subgraph(self.graph, debug_idx)
             self.text_data = Subset(self.text_data, debug_idx)
+            self.text_token = self.text_token.subgraph(debug_idx)
 
         if self.args.use_labels:
             self.args.n_node_feats += self.n_classes
@@ -749,6 +753,7 @@ class LM_GNN():
         self.to_device(self.model_lm)
         
         if self.args.wu_lm > 0:
+            logger.info("Warming up LM")
             self.train_lm()
 
         # training loop

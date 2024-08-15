@@ -23,7 +23,7 @@ from ..utils import EmbeddingHandler, is_dist
 logger = logging.getLogger(__name__)
 
 
-class Dataset(torch.utils.data.Dataset):
+class TextDataset(torch.utils.data.Dataset):
     def __init__(self):
         super().__init__()
 
@@ -47,22 +47,23 @@ class Trainer(ABC):
         self.iter = 0
         self.trial = kwargs.get("trial", None)
         self.model = model
+        # self.args.label_names = ["labels"]
 
-    # @property
-    # def rank(self):
-    #     return int(os.environ["RANK"]) if is_dist() else -1
+    @property
+    def rank(self):
+        return int(os.environ["RANK"]) if is_dist() else -1
 
-    # @property
-    # def world_size(self):
-    #     return int(os.environ["WORLD_SIZE"]) if is_dist() else 1
+    @property
+    def world_size(self):
+        return int(os.environ["WORLD_SIZE"]) if is_dist() else 1
 
-    # @property
-    # def disable_tqdm(self):
-    #     return self.args.disable_tqdm or (is_dist() and self.rank > 0)
+    @property
+    def disable_tqdm(self):
+        return self.args.disable_tqdm or (is_dist() and self.rank > 0)
 
     @property
     def ckpt_path(self):
-        return osp.join(self.args.ckpt_dir, "lm.pt")
+        return osp.join(f"{self.args.save}/ckpt", "lm.pt")
 
     # def save_model(self, model: torch.nn.Module, ckpt_path):
     #     if self.rank <= 0:
@@ -75,12 +76,12 @@ class Trainer(ABC):
         ckpt = torch.load(ckpt_path, map_location="cpu")
         model.load_state_dict(ckpt, strict=False)
 
-    def _prepare_model(self):
-        model_class = get_model_class(self.args.lm_type, self.args.task_type)
-        model = model_class(self.args)
-        n_params = sum(p.numel() for p in model.parameters())
-        logger.warning(f"Model: {self.args.lm_type}, Num of Params: {n_params}")
-        return model
+    # def _prepare_model(self):
+    #     model_class = get_model_class(self.args.lm_type, self.args.task_type)
+    #     model = model_class(self.args)
+    #     n_params = sum(p.numel() for p in model.parameters())
+    #     logger.warning(f"Model: {self.args.lm_type}, Num of Params: {n_params}")
+    #     return model
 
     @abstractmethod
     def _prepare_dataset(self):

@@ -63,8 +63,8 @@ class InnerTrainer(HugTrainer):
 class LMTrainer(Trainer):
     def _get_dataset(self, mode):
         assert mode in ["train", "valid", "test", "all"]
-        # dataset = Dataset(self.data.input_ids, self.data.attention_mask, self.data.y)
-        return self.data if mode == "all" else torch.utils.data.Subset(self.data, self.split_idx[mode])
+        dataset = TextDataset(self.data.input_ids, self.data.attention_mask, self.data.y)
+        return dataset if mode == "all" else torch.utils.data.Subset(dataset, self.split_idx[mode])
 
     def _prepare_dataset(self):
         return self._get_dataset("train"), self._get_dataset("valid"), self._get_dataset("all")
@@ -96,7 +96,7 @@ class LMTrainer(Trainer):
             per_device_eval_batch_size=self.args.batch_size_eval,
             warmup_steps=warmup_steps,
             lr_scheduler_type=self.args.lr_scheduler_type,
-            disable_tqdm=False,
+            disable_tqdm=self.disable_tqdm,
             num_train_epochs=self.args.wu_lm,
             # local_rank=self.rank,
             dataloader_num_workers=8,
@@ -104,6 +104,7 @@ class LMTrainer(Trainer):
             deepspeed=self.args.deepspeed,
             fp16=self.args.fp16,
             # bf16=self.args.bf16,
+            label_names = ["labels"]
         )
         return InnerTrainer(
             model=self.model,

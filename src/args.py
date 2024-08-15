@@ -45,7 +45,7 @@ def parse_args():
     parser.add_argument("--lm_lr", type=float, default=1e-4, help="learning rate for LM")
     parser.add_argument("--wd", type=float, default=1e-5, help="weight decay")    
     parser.add_argument("--warmup", type=int, default=10, help="epochs for warmup")    
-    parser.add_argument("--wu_lm", type=int, default=1, help="epochs for warmup for LM only")  
+    parser.add_argument("--wu_lm", type=int, default=3, help="epochs for warmup for LM only")  
     parser.add_argument("--loss_reduction", type=str, default='mean', help="Specifies the reduction to apply to the loss output")  
     parser.add_argument("--loss_weight", type=float, default=0.5, help="weight of full loss in the conbined loss")   
     parser.add_argument(
@@ -88,7 +88,7 @@ def parse_args():
     
     # LM    
     parser.add_argument("--batch_size_infer", type=int, default=200, help="for LM static embedding")
-    parser.add_argument("--batch_size_train", type=int, default=20, help="for LM static embedding")
+    parser.add_argument("--batch_size_train", type=int, default=10, help="for LM static embedding")
     parser.add_argument("--batch_size_eval", type=int, default=20)
     parser.add_argument("--accum_interval", type=int, default=5)    #for LM
     parser.add_argument(
@@ -105,7 +105,7 @@ def parse_args():
     parser.add_argument("--avg_alpha", type=float, default=0.5)
     parser.add_argument("--eval_delay", type=int, default=0)
     parser.add_argument("--use_cache", action="store_true", default=False)
-    # parser.add_argument("--disable_tqdm", action="store_true", default=False)
+    parser.add_argument("--disable_tqdm", action="store_true", default=False)
     parser.add_argument("--eval_patience", type=int, default=50000)
     parser.add_argument("--warmup_ratio", type=float, default=0.15)
     parser.add_argument(
@@ -171,6 +171,7 @@ def parse_args():
     # args.use_external_feat = True
     # args.train_idx_cluster = True
     args.deepspeed = None
+    args.disable_tqdm = True
     return args
 
 def save_args(args, dir):

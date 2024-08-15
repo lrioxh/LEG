@@ -73,7 +73,7 @@ class E5_model(nn.Module):
 
     def forward(self, input_ids, att_mask, return_hidden=False):
         bert_out = self.bert_model(input_ids=input_ids, attention_mask=att_mask)
-        sentence_embeddings = self.average_pool(bert_out.last_hidden_state, att_mask)
+        sentence_embeddings = self.average_pool(bert_out.last_hidden_state, att_mask) #last_hidden_state as feat
         out = self.head(sentence_embeddings)
 
         if return_hidden:
