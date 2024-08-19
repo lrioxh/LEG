@@ -45,7 +45,7 @@ def parse_args():
     parser.add_argument("--lm_lr", type=float, default=1e-4, help="learning rate for LM")
     parser.add_argument("--wd", type=float, default=1e-5, help="weight decay")    
     parser.add_argument("--warmup", type=int, default=10, help="epochs for warmup")    
-    parser.add_argument("--wu_lm", type=int, default=3, help="epochs for warmup for LM only")  
+    parser.add_argument("--wu_lm", type=int, default=1, help="epochs for warmup for LM only")  
     parser.add_argument("--loss_reduction", type=str, default='mean', help="Specifies the reduction to apply to the loss output")  
     parser.add_argument("--loss_weight", type=float, default=0.5, help="weight of full loss in the conbined loss")   
     parser.add_argument(
@@ -88,8 +88,8 @@ def parse_args():
     
     # LM    
     parser.add_argument("--batch_size_infer", type=int, default=200, help="for LM static embedding")
-    parser.add_argument("--batch_size_train", type=int, default=10, help="for LM static embedding")
-    parser.add_argument("--batch_size_eval", type=int, default=20)
+    parser.add_argument("--batch_size_train", type=int, default=16, help="for LM warming up")
+    # parser.add_argument("--batch_size_eval", type=int, default=200)
     parser.add_argument("--accum_interval", type=int, default=5)    #for LM
     parser.add_argument(
         "--hidden_dropout_prob",

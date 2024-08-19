@@ -93,7 +93,7 @@ class LMTrainer(Trainer):
             label_smoothing_factor=self.args.label_smoothing_factor,
             save_total_limit=1,
             per_device_train_batch_size=self.args.batch_size_train,
-            per_device_eval_batch_size=self.args.batch_size_eval,
+            per_device_eval_batch_size=self.args.batch_size_infer,
             warmup_steps=warmup_steps,
             lr_scheduler_type=self.args.lr_scheduler_type,
             disable_tqdm=self.disable_tqdm,

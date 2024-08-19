@@ -322,9 +322,9 @@ class LM_GNN():
         # trainer
         Trainer = get_trainer_class(self.args.lm_type,self.args.dataset)
         trainer = Trainer(self.args, self.text_token, self.split_idx, self.evaluator, self.model_lm)
-        # print(self.get_params()[0])
+        print(self.get_params()[0])
         results, self.model_lm = trainer.train()
-        # print(self.get_params()[0])
+        print(self.get_params()[0])
         del trainer
         # return results["train_acc"], results["valid_acc"], results["test_acc"], results["train_loss"], results["valid_loss"], results["test_loss"]
         return results

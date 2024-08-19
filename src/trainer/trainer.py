@@ -47,7 +47,6 @@ class Trainer(ABC):
         self.iter = 0
         self.trial = kwargs.get("trial", None)
         self.model = model
-        # self.args.label_names = ["labels"]
 
     @property
     def rank(self):
@@ -100,22 +99,22 @@ class Trainer(ABC):
         return metric.compute(predictions=predictions, references=labels)
 
     def inference(self, dataset, embs_path):
-        # x_embs_name = f"x_embs.pt"
-        # logits_name = f"logits.pt"
-        # emb_handler = EmbeddingHandler(embs_path)
-        # if self.args.use_cache and emb_handler.has([x_embs_name, logits_name]):
-        #     x_embs = emb_handler.load(x_embs_name)
-        #     logits_embs = emb_handler.load(logits_name)
-        #     if isinstance(x_embs, np.ndarray):
-        #         x_embs, logits_embs = torch.from_numpy(x_embs), torch.from_numpy(logits_embs)
-        # else:
-        eval_output = self.trainer.predict(dataset)
-        logits_embs, x_embs = eval_output.predictions[0], eval_output.predictions[1]
-        logits_embs, x_embs = torch.from_numpy(logits_embs), torch.from_numpy(x_embs)
-            # emb_handler.save(x_embs, x_embs_name)   #save embs
-            # emb_handler.save(logits_embs, logits_name)
-            # logger.info(f"save the logits of {self.args.lm_type} to {osp.join(embs_path, logits_name)}")
-            # logger.info(f"save the hidden features of {self.args.lm_type} to {osp.join(embs_path, x_embs_name)}")
+        x_embs_name = f"x_embs.pt"
+        logits_name = f"logits.pt"
+        emb_handler = EmbeddingHandler(embs_path)
+        if self.args.use_cache and emb_handler.has([x_embs_name, logits_name]):
+            x_embs = emb_handler.load(x_embs_name)
+            logits_embs = emb_handler.load(logits_name)
+            if isinstance(x_embs, np.ndarray):
+                x_embs, logits_embs = torch.from_numpy(x_embs), torch.from_numpy(logits_embs)
+        else:
+            eval_output = self.trainer.predict(dataset)
+            logits_embs, x_embs = eval_output.predictions[0], eval_output.predictions[1]
+            logits_embs, x_embs = torch.from_numpy(logits_embs), torch.from_numpy(x_embs)
+            emb_handler.save(x_embs, x_embs_name)   #save embs
+            emb_handler.save(logits_embs, logits_name)
+            logger.info(f"save the logits of {self.args.lm_type} to {osp.join(embs_path, logits_name)}")
+            logger.info(f"save the hidden features of {self.args.lm_type} to {osp.join(embs_path, x_embs_name)}")
         return logits_embs, x_embs
 
     def _evaluate(self, logits, y):

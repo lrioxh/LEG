@@ -1,5 +1,5 @@
 # LEEG
 
 ```bash
-bash run_log.sh [--proceed]
+bash scripts/run_log.sh [--proceed]
 ```
