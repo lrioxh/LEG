@@ -38,10 +38,12 @@ class TextDataset(torch.utils.data.Dataset):
             if self.data[key] is not None:
                 batch_data[key] = self.data[key][index]
         return batch_data
-
+    
+    def get_value(self, key):
+        return self.data[key]
 
 class InnerTrainer(HugTrainer):
-    def compute_loss(self, model, inputs, return_outputs=True):    #TODO：!!重写loss
+    def compute_loss(self, model, inputs, return_outputs=False):    #TODO：!!重写loss
         if "labels" in inputs:
             labels = inputs.pop("labels")
         else:
@@ -63,8 +65,8 @@ class InnerTrainer(HugTrainer):
 class LMTrainer(Trainer):
     def _get_dataset(self, mode):
         assert mode in ["train", "valid", "test", "all"]
-        dataset = TextDataset(self.data.input_ids, self.data.attention_mask, self.data.y)
-        return dataset if mode == "all" else torch.utils.data.Subset(dataset, self.split_idx[mode])
+        # dataset = TextDataset(self.data.input_ids, self.data.attention_mask, self.data.y)
+        return self.data if mode == "all" else torch.utils.data.Subset(self.data, self.split_idx[mode])
 
     def _prepare_dataset(self):
         return self._get_dataset("train"), self._get_dataset("valid"), self._get_dataset("all")
@@ -74,12 +76,12 @@ class LMTrainer(Trainer):
         total_batch_size = 1* self.args.batch_size_train * self.args.accum_interval
         eval_steps = self.args.eval_patience // total_batch_size
         train_steps = len(self.train_set) // total_batch_size + 1
-        warmup_steps = self.args.warmup_ratio * train_steps
+        warmup_steps = int(self.args.warmup_ratio * train_steps)
         training_args = TrainingArguments(
             seed=self.args.seed,
             output_dir=self.args.save,
             optim="adamw_torch",
-            evaluation_strategy="steps",
+            eval_strategy="steps",
             eval_steps=eval_steps,
             save_strategy="steps",
             save_steps=eval_steps,
@@ -88,7 +90,7 @@ class LMTrainer(Trainer):
             weight_decay=self.args.wd,
             load_best_model_at_end=True,
             metric_for_best_model="eval_accuracy",
-            dataloader_drop_last=True,
+            dataloader_drop_last=False,
             gradient_accumulation_steps=self.args.accum_interval,
             label_smoothing_factor=self.args.label_smoothing_factor,
             save_total_limit=1,
