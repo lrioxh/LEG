@@ -176,7 +176,7 @@ class LM_GNN():
         # if not self.lm_only:
         if epoch <= self.args.warmup:     #TODO: 分层调整
             lm_lr = self.args.lm_lr * epoch / self.args.warmup
-            gm_lr = self.args.gm_lr * epoch / self.args.warmup
+            gm_lr = self.args.gm_lr * 0.5*epoch*(1 + 1/self.args.warmup) 
             for i, param_group in enumerate(self.optimizer.param_groups):
                 if self.is_lm[i]:
                     param_group["lr"] = lm_lr
@@ -341,9 +341,6 @@ class LM_GNN():
         self.split_idx = data_graph.get_idx_split()
         self.train_idx, self.val_idx, self.test_idx = self.split_idx ["train"], self.split_idx ["valid"], self.split_idx ["test"]
         self.graph, self.labels = data_graph[0]
-        
-        self.n_node = self.graph.num_nodes()
-        self.n_classes = (self.labels.max() + 1).item()
 
         if self.args.use_external_feat:
             self.feat_static = torch.load(self.args.feat_dir)
@@ -394,8 +391,10 @@ class LM_GNN():
             self.graph = dgl.node_subgraph(self.graph, debug_idx)
             self.text_data = Subset(self.text_data, debug_idx)
             subdata = text_token.subgraph(debug_idx)
-            self.text_token = TextDataset(subdata.input_ids,text_token.attention_mask,text_token.y)
-
+            self.text_token = TextDataset(subdata.input_ids,subdata.attention_mask,subdata.y)
+        
+        self.n_node = self.graph.num_nodes()
+        self.n_classes = (self.labels.max() + 1).item()
         if self.args.use_labels:
             self.args.n_node_feats += self.n_classes
         if self.args.train_idx_cluster:
@@ -826,8 +825,9 @@ class LM_GNN():
                 # if not self.lm_only:
                 if mode == "teacher":
                     self.save_pred(final_pred, n_running, self.args.kd_dir)
-                self.save_stat(epoch,is_full_ft,f'best{rseed}')
-                logger.info(f'best{rseed} at ep{epoch} saved')
+                if val_acc > 0.7:
+                    self.save_stat(epoch,is_full_ft,f'best{rseed}')
+                    logger.info(f'best{rseed} at ep{epoch} saved')
 
             if epoch == self.args.n_epochs or epoch % self.args.log_every == 0:
                 logger.info(
