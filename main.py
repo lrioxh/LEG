@@ -383,14 +383,18 @@ class LM_GNN():
             self.args.n_node_feats += self.args.n_gpt_embs * 5
         
         if self.args.debug > 0:
-            debug_idx = [i for i in range(self.args.debug)]
+            debug_idx = torch.arange(0, self.args.debug)
             self.train_idx = self.train_idx[self.train_idx < self.args.debug]
             self.val_idx = self.val_idx[self.val_idx < self.args.debug]
             self.test_idx = self.test_idx[self.test_idx < self.args.debug]
+            self.split_idx["train"] = self.train_idx
+            self.split_idx["valid"] = self.val_idx
+            self.split_idx["test"] = self.test_idx
             self.labels = self.labels[:self.args.debug]
             self.graph = dgl.node_subgraph(self.graph, debug_idx)
             self.text_data = Subset(self.text_data, debug_idx)
-            self.text_token = Subset(self.text_token, debug_idx)
+            subdata = text_token.subgraph(debug_idx)
+            self.text_token = TextDataset(subdata.input_ids,text_token.attention_mask,text_token.y)
 
         if self.args.use_labels:
             self.args.n_node_feats += self.n_classes

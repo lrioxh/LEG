@@ -158,8 +158,9 @@ def parse_args():
     args = _set_pretrained_repo(args)
     args.save = f"{args.output_dir}/{args.dataset}/{args.model_type}/{args.suffix}"
     os.makedirs(args.save,exist_ok=True)
-    # 可以直接从这里控制：|0 ep从1开始|0 for gnn & 1 for lm+gnn|
-    args.ftmask = [0]+([1 for _ in range(args.ep_full)]+[0 for _ in range(args.ep_gm)])*args.ep_blocks+[1]*10
+    # 可以直接从这里控制：|0: ep从1开始|0 for gnn & 1 for lm+gnn|
+    # args.ftmask = [0]+([1 for _ in range(args.ep_full)]+[0 for _ in range(args.ep_gm)])*args.ep_blocks+[1]*10
+    args.ftmask = [0]+([0 for _ in range(args.ep_gm)]+[1 for _ in range(args.ep_full)])*args.ep_blocks+[0]*10+[1]*10
     args.n_epochs = len(args.ftmask)-1
     args.no_attn_dst = True
     args.use_peft = True
