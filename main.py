@@ -755,7 +755,7 @@ class LM_GNN():
         self.to_device(self.model_gnn)
         self.to_device(self.model_lm)
         
-        if self.args.wu_lm > 0:
+        if self.args.wu_lm > 0 and start_ep==0:
             logger.info("Warming up LM")
             self.train_lm()
 
