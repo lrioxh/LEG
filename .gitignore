@@ -9,6 +9,7 @@ wandb/*
 
 .idea/*
 
+test.py
 *.pt
 *.tar.gz
 

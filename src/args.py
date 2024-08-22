@@ -35,8 +35,8 @@ def parse_args():
     parser.add_argument("--gpu", type=int, default=0, help="GPU device ID.")
     parser.add_argument("--seed", type=int, default=42, help="seed")
     parser.add_argument("--n_runs", type=int, default=1, help="running times")
-    parser.add_argument("--ep_blocks", type=int, default=3, help="number of epoch blocks")     
-    parser.add_argument("--ep_gm", type=int, default=5, help="number of epochs for GM only in one block")   
+    parser.add_argument("--ep_blocks", type=int, default=2, help="number of epoch blocks")     
+    parser.add_argument("--ep_gm", type=int, default=10, help="number of epochs for GM only in one block")   
     parser.add_argument("--ep_full", type=int, default=5, help="number of epochs for full tuning in one block")   
     parser.add_argument("--eval_epoch", type=int, default=1) 
     # parser.add_argument("--reuse_epoch", type=int, default=2, help="reuse LM embs every reuse_epoch")
@@ -44,8 +44,8 @@ def parse_args():
     parser.add_argument("--gm_lr", type=float, default=1e-3, help="learning rate for GM")
     parser.add_argument("--lm_lr", type=float, default=1e-4, help="learning rate for LM")
     parser.add_argument("--wd", type=float, default=1e-5, help="weight decay")    
-    parser.add_argument("--warmup", type=int, default=10, help="epochs for warmup")    
-    parser.add_argument("--wu_lm", type=int, default=1, help="epochs for warmup for LM only")  
+    parser.add_argument("--warmup", type=int, default=15, help="epochs for warmup")    
+    parser.add_argument("--wu_lm", type=int, default=5, help="epochs for warmup for LM only")  
     parser.add_argument("--loss_reduction", type=str, default='mean', help="Specifies the reduction to apply to the loss output")  
     parser.add_argument("--loss_weight", type=float, default=0.5, help="weight of full loss in the conbined loss")   
     parser.add_argument(
@@ -159,7 +159,7 @@ def parse_args():
     args.save = f"{args.output_dir}/{args.dataset}/{args.model_type}/{args.suffix}"
     os.makedirs(args.save,exist_ok=True)
     # 可以直接从这里控制：|0 ep从1开始|0 for gnn & 1 for lm+gnn|
-    args.ftmask = [0]+([0 for _ in range(args.ep_gm)]+[1 for _ in range(args.ep_full)])*args.ep_blocks+[0]*10+[1]*10
+    args.ftmask = [0]+([1 for _ in range(args.ep_full)]+[0 for _ in range(args.ep_gm)])*args.ep_blocks+[1]*10
     args.n_epochs = len(args.ftmask)-1
     args.no_attn_dst = True
     args.use_peft = True

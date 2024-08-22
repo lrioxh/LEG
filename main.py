@@ -509,7 +509,7 @@ class LM_GNN():
             feat_train = self.feat_static.to(self.device)
             
         if self.args.use_labels:
-            feat_train = torch.cat([feat_train, 
+            feat_train = torch.cat([feat_train,       
                               torch.zeros((self.n_node, self.n_classes), 
                                           dtype=torch.float16 if self.args.fp16 else torch.float32, 
                                           device=self.device)],
@@ -559,13 +559,13 @@ class LM_GNN():
             else:
                 raise Exception("unkown mode")
 
-            if self.args.fp16:
-                self.scaler.scale(loss).backward()
-                self.scaler.step(self.optimizer)
-                self.scaler.update()
-            else:
-                loss.backward()
-                self.optimizer.step()
+            # if self.args.fp16:
+            #     self.scaler.scale(loss).backward()
+            #     self.scaler.step(self.optimizer)
+            #     self.scaler.update()
+            # else:
+            loss.backward()
+            self.optimizer.step()
 
             return evaluator(pred[self.train_idx], self.labels[self.train_idx]), loss.item()
         # if 0:
