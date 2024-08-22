@@ -264,7 +264,8 @@ class LM_GNN():
             
       
     def count_params(self, grad_only=True):
-        return sum([p.numel() for (n,p) in self.get_params(grad_only)])
+        params = self.get_params(grad_only = grad_only)
+        return sum([p.numel() for (n,p) in params])
     
     def print_grad_norm(self):
         for name, param in self.get_params():
@@ -322,12 +323,13 @@ class LM_GNN():
         # trainer
         Trainer = get_trainer_class(self.args.lm_type,self.args.dataset)
         trainer = Trainer(self.args, self.text_token, self.split_idx, self.evaluator, self.model_lm)
-        print(self.get_params()[0])
-        results, self.model_lm = trainer.train()
-        print(self.get_params()[0])
+        # print(self.get_params()[0])
+        results, x_embs, self.model_lm = trainer.train()
+        # print(self.get_params()[0])
+        self.feat_static = x_embs
         del trainer
         # return results["train_acc"], results["valid_acc"], results["test_acc"], results["train_loss"], results["valid_loss"], results["test_loss"]
-        return results
+        # return results
        
     def load_data(self):
         assert self.args.dataset in [
@@ -336,8 +338,8 @@ class LM_GNN():
         data_graph = DglNodePropPredDataset(name=self.args.dataset, root="../dgl_data")
         self.evaluator = Evaluator(name=self.args.dataset)
         
-        split_idx = data_graph.get_idx_split()
-        self.train_idx, self.val_idx, self.test_idx = split_idx ["train"], split_idx ["valid"], split_idx ["test"]
+        self.split_idx = data_graph.get_idx_split()
+        self.train_idx, self.val_idx, self.test_idx = self.split_idx ["train"], self.split_idx ["valid"], self.split_idx ["test"]
         self.graph, self.labels = data_graph[0]
         
         self.n_node = self.graph.num_nodes()
@@ -350,17 +352,18 @@ class LM_GNN():
             )
         else:
             # text attr
-            text_token, self.split_idx, evaluator = load_data_bundle(
+            text_token, _, evaluator = load_data_bundle(
                 self.args.dataset,
                 root=self.args.data_folder,
                 tokenizer=self.args.pretrained_repo,
                 tokenize=True)
             if self.args.dataset == "ogbn-arxiv":
                 transform = T.ToUndirected()    #TODO: 加入PE处理有向图
-                self.text_token = transform(text_token)
-            self.text_data = TensorDataset(self.text_token.input_ids, self.text_token.attention_mask) 
+                text_token = transform(text_token)
+            self.text_token = TextDataset(text_token.input_ids, text_token.attention_mask, text_token.y)
+            self.text_data = TensorDataset(text_token.input_ids, text_token.attention_mask) 
             logger.warning(
-                f"Loaded node tokens of shape=({self.n_node},{self.text_token.input_ids.shape[1]})")      
+                f"Loaded node tokens of shape=({self.n_node},{text_token.input_ids.shape[1]})")      
         # TODO
         self.args.n_node_feats = self.args.hidden_size
         if self.args.use_gpt_preds:
@@ -387,7 +390,7 @@ class LM_GNN():
             self.labels = self.labels[:self.args.debug]
             self.graph = dgl.node_subgraph(self.graph, debug_idx)
             self.text_data = Subset(self.text_data, debug_idx)
-            self.text_token = self.text_token.subgraph(debug_idx)
+            self.text_token = Subset(self.text_token, debug_idx)
 
         if self.args.use_labels:
             self.args.n_node_feats += self.n_classes
@@ -489,7 +492,7 @@ class LM_GNN():
     ):
         
         self.model_gnn.train()
-        if self.model_lm: self.model_lm.train()
+        if self.model_lm and full_ft: self.model_lm.train()
         
         # if mode == "student":
         #     assert teacher_output != None
@@ -819,7 +822,7 @@ class LM_GNN():
                 # if not self.lm_only:
                 if mode == "teacher":
                     self.save_pred(final_pred, n_running, self.args.kd_dir)
-                self.save_stat(epoch,f'best{rseed}')
+                self.save_stat(epoch,is_full_ft,f'best{rseed}')
                 logger.info(f'best{rseed} at ep{epoch} saved')
 
             if epoch == self.args.n_epochs or epoch % self.args.log_every == 0:

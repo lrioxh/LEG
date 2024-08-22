@@ -136,10 +136,10 @@ class Trainer(ABC):
     def inference_and_evaluate(self, dataset):
         embs_path = os.path.join(self.args.save, "cached_embs")
         logits_embs, x_embs = self.inference(dataset, embs_path)    #save embs
-        results = self._evaluate(logits_embs, self.data.y)
+        results = self._evaluate(logits_embs, dataset.get_value("labels"))
         logger.critical("".join("{}:{:.4f} ".format(k, v) for k, v in results.items()))
-        gc.collect()
-        torch.cuda.empty_cache()
+        # gc.collect()
+        # torch.cuda.empty_cache()
         return logits_embs, x_embs, results  # x_embs is None in GNNTrainer
 
     def train_once(self):
@@ -168,8 +168,8 @@ class Trainer(ABC):
             self.train_once()
 
         logger.warning(f"\n*************** Start inference and testing ***************\n")
-        _, _, results = self.inference_and_evaluate(self.all_set)
+        _, x_embs, results = self.inference_and_evaluate(self.all_set)   
         gc.collect()
         torch.cuda.empty_cache()
         # torch.save(self.model.state_dict(), self.ckpt_path)
-        return results, self.model
+        return results, x_embs, self.model
