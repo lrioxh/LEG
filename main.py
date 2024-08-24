@@ -176,7 +176,8 @@ class LM_GNN():
         # if not self.lm_only:
         if epoch <= self.args.warmup:     #TODO: 分层调整
             lm_lr = self.args.lm_lr * epoch / self.args.warmup
-            gm_lr = self.args.gm_lr * 0.5*epoch*(1 + 1/self.args.warmup) 
+            # gm_lr = self.args.gm_lr * 0.5*epoch*(1 + 1/self.args.warmup) 
+            gm_lr = self.args.lm_lr * epoch / self.args.warmup
             for i, param_group in enumerate(self.optimizer.param_groups):
                 if self.is_lm[i]:
                     param_group["lr"] = lm_lr
@@ -215,6 +216,7 @@ class LM_GNN():
             'optm_dict': self.optimizer.state_dict(),
             'feat_static': self.feat_static,
             'full_ft': full_ft,
+            'args': self.args,
             # 可以添加其他你需要保存的状态
         }, fname)
         logger.info(f"Saving stat ckpt for ep{epoch} ...")
@@ -224,7 +226,7 @@ class LM_GNN():
         fname = os.path.join(out_dir, f"last_stat.pt")
         checkpoint = torch.load(fname, map_location=self.device)
         last_epoch = checkpoint['epoch']  # 从上次结束的epoch开始
-        full_ft = checkpoint['full_ft']  # 从上次结束的epoch开始
+        full_ft = checkpoint['full_ft'] 
         logger.info(f"Loading last ckpt from {fname}, continue after ep{last_epoch}")
         if 0 < self.args.peft_start <= last_epoch:
             self.switch_to('gnn_lora')     
@@ -237,6 +239,7 @@ class LM_GNN():
         # if self.args.peft_start != last_epoch: 
         self.optimizer.load_state_dict(checkpoint['optm_dict'])
         self.feat_static = checkpoint['feat_static']
+        self.args = checkpoint['args']
         del checkpoint
         return last_epoch, full_ft
     
@@ -328,8 +331,10 @@ class LM_GNN():
         # print(self.get_params()[0])
         self.feat_static = x_embs
         del trainer
-        # return results["train_acc"], results["valid_acc"], results["test_acc"], results["train_loss"], results["valid_loss"], results["test_loss"]
-        # return results
+        # logger.info(
+        #             f'Train/Val/Test loss: {results["train_loss"]:.4f}/{results["valid_loss"]:.4f}/{results["test_loss"]:.4f}\n'
+        #             f'Train/Val/Test/Best val/Final test acc: {results["train_acc"]:.4f}/{results["valid_acc"]:.4f}/{results["test_acc"]:.4f}'
+        #         )
        
     def load_data(self):
         assert self.args.dataset in [
@@ -360,7 +365,7 @@ class LM_GNN():
             self.text_token = TextDataset(text_token.input_ids, text_token.attention_mask, text_token.y)
             self.text_data = TensorDataset(text_token.input_ids, text_token.attention_mask) 
             logger.warning(
-                f"Loaded node tokens of shape=({self.n_node},{text_token.input_ids.shape[1]})")      
+                f"Loaded node tokens of shape={text_token.input_ids.shape}")      
         # TODO
         self.args.n_node_feats = self.args.hidden_size
         if self.args.use_gpt_preds:
