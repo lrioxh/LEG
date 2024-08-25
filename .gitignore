@@ -6,10 +6,10 @@ cache/
 data/*
 out/*
 wandb/*
-
 .idea/*
 
 test.py
+*.db
 *.pt
 *.tar.gz
 

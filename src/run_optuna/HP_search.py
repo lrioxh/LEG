@@ -12,7 +12,7 @@ import torch.distributed as dist
 from optuna.exceptions import ExperimentalWarning
 from optuna.trial import TrialState
 
-from main import set_seed
+from main import seed
 
 from ..args import parse_args, save_args
 from ..run import cleanup, get_trainer_class, load_data, set_single_env
@@ -57,7 +57,7 @@ class HP_search(ABC):
 
     def load_study(self):
         args = parse_args()
-        args.random_seed = args.start_seed
+        args.random_seed = args.seed
         study = optuna.load_study(
             storage="sqlite:///optuna.db",
             study_name=f"{args.dataset}_{args.model_type}_{args.suffix}",
@@ -95,8 +95,8 @@ class Single_HP_search(HP_search):
     def run(self, n_trials):
         # run
         args = self.args
-        args.random_seed = args.start_seed
-        set_seed(random_seed=args.random_seed)
+        args.random_seed = args.seed
+        seed(args.random_seed)
 
         study = optuna.create_study(
             direction="maximize",
@@ -106,7 +106,7 @@ class Single_HP_search(HP_search):
             pruner=optuna.pruners.SuccessiveHalvingPruner(),
         )
         study.optimize(
-            self.objective, n_trials=n_trials, callbacks=[partial(save_best_trial, output_dir=args.output_dir)]
+            self.objective, n_trials=n_trials, callbacks=[partial(save_best_trial, output_dir=args.save)]
         )
         assert study is not None
         pruned_trials = study.get_trials(deepcopy=False, states=[TrialState.PRUNED])
@@ -149,7 +149,7 @@ class Dist_HP_search(HP_search):
         dist.init_process_group(backend="nccl", rank=rank, world_size=world_size)
         # have to set_device in order to use NCCL collective function, e.g. dist.broadcast_object_list
         torch.cuda.set_device(rank)
-        set_seed(random_seed=args.random_seed)
+        seed(random_seed=args.random_seed)
 
         if rank == 0:
             study = optuna.create_study(

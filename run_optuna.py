@@ -12,6 +12,7 @@ from src.run_optuna.search_space import (
     LM_HP_search,
     PEFT_LM_HP_search,
     Sampling_GNN_HP_search,
+    LM_GNN_HP_search
 )
 from src.utils import set_logging
 
@@ -34,6 +35,8 @@ def get_search_instance(model_type, use_peft=False):
         return Decoupling_GNN_HP_search
     elif model_type in ["GraphSAGE", "GCN"]:
         return Sampling_GNN_HP_search
+    elif model_type in ["e5-revgat"]:
+        return LM_GNN_HP_search
     else:
         raise NotImplementedError("not implemented HP search class")
 
