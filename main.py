@@ -43,24 +43,6 @@ def seed(seed=0):
     torch.backends.cudnn.benchmark = False
     dgl.random.seed(seed)
 
-
-def preprocess(graph):
-    # global n_node_feats
-
-    # make bidirected
-    # feat = graph.ndata["feat"]
-    graph = dgl.to_bidirected(graph)
-    graph.ndata["feat"] = torch.empty((graph.num_nodes(), 0))
-
-    # add self-loop
-    logger.info(f"Total edges before adding self-loop {graph.number_of_edges()}")
-    graph = graph.remove_self_loop().add_self_loop()
-    logger.info(f"Total edges after adding self-loop {graph.number_of_edges()}")
-
-    graph.create_formats_()
-
-    return graph
-
 class ReplaceRowsFunction(torch.autograd.Function):
     @staticmethod
     def forward(ctx, input, rows, replacement):
@@ -156,6 +138,21 @@ class LM_GNN():
         if len(idx)>0:
             onehot[idx, labels[idx, 0]] = 1
         return onehot
+    
+    def preprocess(self):
+        # global n_node_feats
+
+        # make bidirected
+        # feat = graph.ndata["feat"]
+        self.graph = dgl.to_bidirected(self.graph)
+        self.graph.ndata["feat"] = torch.empty((self.graph.num_nodes(), 0))
+
+        # add self-loop
+        logger.info(f"Total edges before adding self-loop {self.graph.number_of_edges()}")
+        self.graph = self.graph.remove_self_loop().add_self_loop()
+        logger.info(f"Total edges after adding self-loop {self.graph.number_of_edges()}")
+
+        self.graph.create_formats_()
     
     def prepare(self):
         '''device, scaler, criterion'''
@@ -491,9 +488,16 @@ class LM_GNN():
                 self.model_gnn.load_state_dict(src_model.state_dict(), strict=False)
                 self.lora_added = True
                 self.to_device(self.model_gnn)
-                self.args.lm_lr = self.optimizer.param_groups[0]["lr"]
-                self.args.gm_lr = self.optimizer.param_groups[-1]["lr"]
-                self.optimizer = optim.RMSprop(self.get_params(init_lr=True), lr=self.args.gm_lr, weight_decay=self.args.wd)
+                # self.args.lm_lr = self.optimizer.param_groups[0]["lr"]
+                # self.args.gm_lr = self.optimizer.param_groups[-1]["lr"]
+                optm_dict = self.optimizer.state_dict()
+                self.optimizer = optim.RMSprop(self.get_params(), lr=self.args.lm_lr, weight_decay=self.args.wd)
+                optm_dict_cur = self.optimizer.state_dict()
+                for key in optm_dict:
+                    if key in optm_dict_cur:
+                        # 如果参数存在，复制状态
+                        optm_dict_cur[key] = optm_dict[key]
+                self.optimizer.load_state_dict(optm_dict_cur)
             lora.mark_only_lora_as_trainable(self.model_gnn)
             logger.info("GM switched to LoRA")
         elif mode == 'gnn_backbone':
@@ -897,7 +901,7 @@ def main():
 
     # load data & preprocess
     gbc.load_data()
-    gbc.graph = preprocess(gbc.graph)#
+    gbc.preprocess()#
 
     # to device
     gbc.prepare()
