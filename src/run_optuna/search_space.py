@@ -5,6 +5,8 @@ from optuna.exceptions import ExperimentalWarning
 
 from .HP_search import Dist_HP_search, Single_HP_search
 
+from main import LM_GNN, seed
+
 logger = logging.getLogger(__name__)
 # optuna.logging.set_verbosity(optuna.logging.ERROR)
 warnings.filterwarnings("ignore", category=ExperimentalWarning, module="optuna.multi_objective")
@@ -62,3 +64,38 @@ class Link_GNN_HP_search(Single_HP_search):
         args.gnn_dropout = trial.suggest_float("gnn_dropout", 0.1, 0.8)
         args.gnn_num_layers = trial.suggest_int("gnn_num_layers", 2, 3)
         return args
+
+class LM_GNN_HP_search(Single_HP_search):
+    def setup_search_space(self, args, trial):
+        args.gm_lr = trial.suggest_float("gm_lr", 1e-4, 1e-2, log=True)
+        args.lm_lr = trial.suggest_float("lm_lr", 1e-5, 1e-3, log=True)
+        args.wd = trial.suggest_float("wd", 1e-6, 1e-4, log=True)
+        # args.gnn_dropout = trial.suggest_float("gnn_dropout", 0.1, 0.8)
+        # args.gnn_num_layers = trial.suggest_int("frozen_padding", 4, 8)
+        # args.gnn_num_layers = trial.suggest_int("warmup", 4, 8)
+        # args.gnn_num_layers = trial.suggest_int("wu_lm", 4, 8)
+        return args
+    
+    def train(self, args, trial=None):
+        gbc = LM_GNN(args)
+        # load data & preprocess
+        gbc.load_data()
+        gbc.preprocess()#
+
+        # to device
+        gbc.prepare()
+        # logger.info(gbc.args)
+        # save_args(gbc.args, gbc.args.save)
+        
+        # run
+        # val_accs, test_accs = [], []
+
+        # for i in range(gbc.args.n_runs):
+            # rseed = gbc.args.seed + i
+        seed(args.seed)
+        gbc.init_loader()
+        val_acc, test_acc = gbc.run(1, args.seed)
+        # val_accs.append(val_acc)
+        # test_accs.append(test_acc)
+        return val_acc
+    

@@ -174,7 +174,7 @@ class LM_GNN():
         if epoch <= self.args.warmup:     #TODO: 分层调整
             lm_lr = self.args.lm_lr * epoch / self.args.warmup
             # gm_lr = self.args.gm_lr * 0.5*epoch*(1 + 1/self.args.warmup) 
-            gm_lr = self.args.lm_lr * epoch / self.args.warmup
+            gm_lr = self.args.gm_lr * epoch / self.args.warmup
             for i, param_group in enumerate(self.optimizer.param_groups):
                 if self.is_lm[i]:
                     param_group["lr"] = lm_lr

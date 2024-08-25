@@ -39,11 +39,11 @@ def parse_args():
     parser.add_argument("--ep_gm", type=int, default=6, help="number of epochs for GM only in one block")   
     parser.add_argument("--ep_full", type=int, default=4, help="number of epochs for full tuning in one block")   
     parser.add_argument("--eval_epoch", type=int, default=1) 
-    parser.add_argument("--gm_lr", type=float, default=1e-3, help="learning rate for GM")
-    parser.add_argument("--lm_lr", type=float, default=5e-4, help="learning rate for LM")
-    parser.add_argument("--wd", type=float, default=1e-5, help="weight decay")    
+    parser.add_argument("--gm_lr", type=float, default=5e-4, help="learning rate for GM")
+    parser.add_argument("--lm_lr", type=float, default=1e-4, help="learning rate for LM")
+    parser.add_argument("--wd", type=float, default=1e-6, help="weight decay")    
     parser.add_argument("--warmup", type=int, default=10, help="epochs for warmup")    
-    parser.add_argument("--wu_lm", type=int, default=0, help="epochs for warmup for LM only")  
+    parser.add_argument("--wu_lm", type=int, default=2, help="epochs for warmup for LM only")  
     parser.add_argument("--loss_reduction", type=str, default='mean', help="Specifies the reduction to apply to the loss output")  
     parser.add_argument("--loss_weight", type=float, default=0.5, help="weight of full loss in the conbined loss")   
     parser.add_argument(
@@ -144,13 +144,15 @@ def parse_args():
     )
      
     # peft & lora hyperparams
-    parser.add_argument("--peft_start", type=int, default=21, help='epoch that start to train GM with PEFT')
+    parser.add_argument("--peft_start", type=int, default=50, help='epoch that start to train GM with PEFT')
     parser.add_argument("--use_peft", action="store_true", default=False)
     parser.add_argument("--peft_r", type=int, default=8) #8
     parser.add_argument("--peft_lora_alpha", type=float, default=8)
     parser.add_argument("--peft_lora_dropout", type=float, default=0.3)
     
     # optuna
+    parser.add_argument("--expected_valid_acc", type=float, default=0.6)
+    parser.add_argument("--n_trials", type=int, default=10)
     parser.add_argument("--load_study", action="store_true", default=False)
     
     args = parser.parse_args()
