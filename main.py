@@ -174,7 +174,7 @@ class LM_GNN():
         if epoch <= self.args.warmup:     #TODO: 分层调整
             lm_lr = self.args.lm_lr * epoch / self.args.warmup
             # gm_lr = self.args.gm_lr * 0.5*epoch*(1 + 1/self.args.warmup) 
-            gm_lr = self.args.lm_lr * epoch / self.args.warmup
+            gm_lr = self.args.gm_lr * epoch / self.args.warmup
             for i, param_group in enumerate(self.optimizer.param_groups):
                 if self.is_lm[i]:
                     param_group["lr"] = lm_lr
@@ -227,8 +227,6 @@ class LM_GNN():
         logger.info(f"Loading last ckpt from {fname}, continue after ep{last_epoch}")
         if 0 < self.args.peft_start <= last_epoch:
             self.switch_to('gnn_lora')     
-        # else:
-            # self.optimizer = optim.RMSprop(self.get_params(), lr=self.args.gm_lr, weight_decay=self.args.wd)
         self.to_device(self.model_gnn)
         self.to_device(self.model_lm)
         self.model_gnn.load_state_dict(checkpoint['gnn_dict'],strict=False)
@@ -241,7 +239,7 @@ class LM_GNN():
         logger.info(f"Loaded args: {self.args}")
         return last_epoch, full_ft
     
-    def get_params(self, init_lr=False, grad_only = True):
+    def get_params(self, init_lr=False, grad_only = True, gm_lora = False):
         params = []
         if init_lr:
             self.is_lm = []
@@ -253,6 +251,12 @@ class LM_GNN():
                 gmp = [{'params': p, 'lr': self.args.gm_lr} for p in self.model_gnn.parameters()]
                 params += gmp
                 self.is_lm += [0 for _ in range(len(gmp))]
+            if gm_lora: 
+                params = []
+                for n, p in self.model_gnn.named_parameters():
+                    if 'lora_' in n:
+                        params.append({'params': p, 'lr': self.args.gm_lr})
+                return params
             if grad_only:
                 return [p for p in params if p['params'].requires_grad]
         else:
@@ -466,7 +470,8 @@ class LM_GNN():
     def switch_to(self, mode: Literal['gnn_lora', 'gnn_backbone', 'gnn_only', 'full_ft','lm_only']):
         if mode=='gnn_lora':
             if not self.lora_added:
-                src_model = self.model_gnn.to('cpu')
+                src_model = self.model_gnn.state_dict()
+                # src_model.to('cpu')
                 self.model_gnn = RevGAT(
                         self.args,
                         self.n_classes,
@@ -485,19 +490,13 @@ class LM_GNN():
                             'lora_dropout': self.args.peft_lora_dropout
                             }
                     )
-                self.model_gnn.load_state_dict(src_model.state_dict(), strict=False)
-                self.lora_added = True
+                self.model_gnn.load_state_dict(src_model, strict=False)
                 self.to_device(self.model_gnn)
-                # self.args.lm_lr = self.optimizer.param_groups[0]["lr"]
-                # self.args.gm_lr = self.optimizer.param_groups[-1]["lr"]
-                optm_dict = self.optimizer.state_dict()
-                self.optimizer = optim.RMSprop(self.get_params(), lr=self.args.lm_lr, weight_decay=self.args.wd)
-                optm_dict_cur = self.optimizer.state_dict()
-                for key in optm_dict:
-                    if key in optm_dict_cur:
-                        # 如果参数存在，复制状态
-                        optm_dict_cur[key] = optm_dict[key]
-                self.optimizer.load_state_dict(optm_dict_cur)
+                self.lora_added = True
+                self.args.gm_lr = self.optimizer.param_groups[-1]["lr"]
+                for item in self.get_params(init_lr=True, gm_lora=True):
+                    self.optimizer.add_param_group(item)
+
             lora.mark_only_lora_as_trainable(self.model_gnn)
             logger.info("GM switched to LoRA")
         elif mode == 'gnn_backbone':
