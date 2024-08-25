@@ -166,9 +166,9 @@ class Trainer(ABC):
         assert self.args.mode in ["train", "test"]
         if self.args.mode == "train":
             self.train_once()
-
+        results, x_embs = None, None
         logger.warning(f"\n*************** Start inference and testing ***************\n")
-        _, x_embs, results = self.inference_and_evaluate(self.all_set)   
+        # _, x_embs, results = self.inference_and_evaluate(self.all_set)   
         gc.collect()
         torch.cuda.empty_cache()
         # torch.save(self.model.state_dict(), self.ckpt_path)

@@ -108,7 +108,7 @@ class LM_GNN():
         self.model_gnn = None
         self.is_lm = []
         self.require_grad = []
-        # self.lm_only=False
+        self.lora_added = False
 
     def reorder_train_idx(self):
         '''邻接重排id'''
@@ -241,11 +241,13 @@ class LM_GNN():
         self.feat_static = checkpoint['feat_static']
         self.args = checkpoint['args']
         del checkpoint
+        logger.info(f"Loaded args: {self.args}")
         return last_epoch, full_ft
     
     def get_params(self, init_lr=False, grad_only = True):
         params = []
         if init_lr:
+            self.is_lm = []
             if self.model_lm:
                 lmp = [{'params': p, 'lr': self.args.lm_lr} for p in self.model_lm.parameters()]
                 params += lmp
@@ -329,7 +331,7 @@ class LM_GNN():
         # print(self.get_params()[0])
         results, x_embs, self.model_lm = trainer.train()
         # print(self.get_params()[0])
-        self.feat_static = x_embs
+        # self.feat_static = x_embs
         del trainer
         # logger.info(
         #             f'Train/Val/Test loss: {results["train_loss"]:.4f}/{results["valid_loss"]:.4f}/{results["test_loss"]:.4f}\n'
@@ -419,7 +421,7 @@ class LM_GNN():
                     batch_size=self.args.kernel_size,
                     shuffle=False,
                     drop_last=False,
-                    num_workers=4)
+                    num_workers=8)
             else:
                 sampler = dgl.dataloading.ShaDowKHopSampler(grad_block)
                 self.graph_loader = dgl.dataloading.DataLoader(
@@ -427,7 +429,7 @@ class LM_GNN():
                     batch_size=self.args.kernel_size,
                     shuffle=False,
                     drop_last=False,
-                    num_workers=4)
+                    num_workers=8)
         else:
             # TODO: whole graph
             self.whole_graph = True
@@ -445,13 +447,7 @@ class LM_GNN():
                 edge_drop=self.args.edge_drop,
                 use_attn_dst=not self.args.no_attn_dst,
                 use_symmetric_norm=self.args.use_norm,
-                use_gpt_preds=self.args.use_gpt_preds,
-                lora_params={
-                    'use_lora': self.args.use_peft,
-                    'r': self.args.peft_r,
-                    'lora_alpha': self.args.peft_lora_alpha,
-                    'lora_dropout': self.args.peft_lora_dropout
-                    } if 0 < self.args.peft_start <= self.args.n_epochs else None
+                use_gpt_preds=self.args.use_gpt_preds
             )
 
             if self.args.ckpt_dir != '' and os.path.exists(self.args.ckpt_dir):
@@ -472,6 +468,32 @@ class LM_GNN():
 
     def switch_to(self, mode: Literal['gnn_lora', 'gnn_backbone', 'gnn_only', 'full_ft','lm_only']):
         if mode=='gnn_lora':
+            if not self.lora_added:
+                src_model = self.model_gnn.to('cpu')
+                self.model_gnn = RevGAT(
+                        self.args,
+                        self.n_classes,
+                        activation=F.relu,
+                        dropout=self.args.dropout,
+                        input_drop=self.args.input_drop,
+                        attn_drop=self.args.attn_drop,
+                        edge_drop=self.args.edge_drop,
+                        use_attn_dst=not self.args.no_attn_dst,
+                        use_symmetric_norm=self.args.use_norm,
+                        use_gpt_preds=self.args.use_gpt_preds,
+                        lora_params={
+                            'use_lora': self.args.use_peft,
+                            'r': self.args.peft_r,
+                            'lora_alpha': self.args.peft_lora_alpha,
+                            'lora_dropout': self.args.peft_lora_dropout
+                            }
+                    )
+                self.model_gnn.load_state_dict(src_model.state_dict(), strict=False)
+                self.lora_added = True
+                self.to_device(self.model_gnn)
+                self.args.lm_lr = self.optimizer.param_groups[0]["lr"]
+                self.args.gm_lr = self.optimizer.param_groups[-1]["lr"]
+                self.optimizer = optim.RMSprop(self.get_params(init_lr=True), lr=self.args.gm_lr, weight_decay=self.args.wd)
             lora.mark_only_lora_as_trainable(self.model_gnn)
             logger.info("GM switched to LoRA")
         elif mode == 'gnn_backbone':
@@ -511,20 +533,20 @@ class LM_GNN():
         if full_ft and self.whole_graph:
             out_lm, feat_train = self.get_feat(self.device, return_cls = True)
         else:
+            # print(self.feat_static)
             if self.feat_static == None:
                 with torch.no_grad():
-                    self.feat_static = self.get_feat()    
-            feat_train = self.feat_static.to(self.device)
+                    self.feat_static = self.get_feat()  
+            # print(self.feat_static)  
+            feat_train = self.feat_static.to(device=self.device, dtype=torch.float32)
             
         if self.args.use_labels:
             feat_train = torch.cat([feat_train,       
                               torch.zeros((self.n_node, self.n_classes), 
-                                          dtype=torch.float16 if self.args.fp16 else torch.float32, 
                                           device=self.device)],
                               dim=-1)
         if self.args.use_gpt_preds:
-            feat_train = torch.cat([self.gpt_preds.to(dtype=torch.float16 if self.args.fp16 else torch.float32, 
-                                                            device=self.device)
+            feat_train = torch.cat([self.gpt_preds.to(device=self.device)
                                 ,feat_train],
                                 dim=-1)
             
@@ -605,23 +627,22 @@ class LM_GNN():
                         self.optimizer.zero_grad()
                         # feat = feat.detach()
 
-                        if full_ft:
-                            subset = Subset(self.text_data, grad_idx) 
-                            dataloader = DataLoader(subset, batch_size=len(grad_idx))
-                            for _, (input_ids, attention_mask) in enumerate(dataloader):
-                                input_ids = input_ids.to(self.device)
-                                attention_mask = attention_mask.to(self.device)
-                                if self.args.fp16:
-                                    with autocast():
-                                        out_lm, embs = self.model_lm(input_ids, attention_mask, return_hidden=True)
-                                    # embs = embs.to(torch.float16)
-                                    # feat = feat.to(dtype=torch.float32)
-                                else:
+                        # if full_ft:
+                        subset = Subset(self.text_data, grad_idx) 
+                        dataloader = DataLoader(subset, batch_size=len(grad_idx))
+                        for _, (input_ids, attention_mask) in enumerate(dataloader):
+                            input_ids = input_ids.to(self.device)
+                            attention_mask = attention_mask.to(self.device)
+                            if self.args.fp16:
+                                with autocast():
                                     out_lm, embs = self.model_lm(input_ids, attention_mask, return_hidden=True)
-                        
-                            torch.cuda.empty_cache()    
-                            gc.collect()
-                        feat = feat.to(dtype=torch.float32)    
+                                # embs = embs.to(torch.float16)
+                                # feat = feat.to(dtype=torch.float32)
+                            else:
+                                out_lm, embs = self.model_lm(input_ids, attention_mask, return_hidden=True)
+                    
+                        # torch.cuda.empty_cache()    
+                        # gc.collect() 
                         
                         # gnn
                         if self.args.use_labels:
@@ -631,14 +652,14 @@ class LM_GNN():
                             if len(train_labels_idx):
                                 feat[self.id_in_parent(sub_idx, train_labels_idx),
                                     -self.n_classes:] = onehot_labels[train_labels_idx]
-                            if full_ft:
-                                embs = torch.cat([embs, onehot_labels[grad_idx]], dim=-1)
+                            # if full_ft:
+                            embs = torch.cat([embs, onehot_labels[grad_idx]], dim=-1)
                         
-                        if full_ft:
-                            if self.args.use_gpt_preds:
-                                embs = torch.cat([self.gpt_preds[grad_idx].to(self.device), embs], dim=-1)
-                            
-                            feat = replace_rows(feat, self.id_in_parent(sub_idx, grad_idx), embs)
+                        # if full_ft:
+                        if self.args.use_gpt_preds:
+                            embs = torch.cat([self.gpt_preds[grad_idx].to(self.device), embs], dim=-1)
+                        
+                        feat = replace_rows(feat, self.id_in_parent(sub_idx, grad_idx), embs)
 
                         if self.args.n_label_iters > 0:
                             with torch.no_grad():
@@ -662,20 +683,20 @@ class LM_GNN():
                                 pred = self.model_gnn(graph, feat)
 
                         if mode == "teacher":
-                            if full_ft:
-                                loss = self.args.loss_weight*self.custom_train_loss(
-                                    self.labels[train_pred_idx],
-                                    pred[self.id_in_parent(sub_idx, train_pred_idx)]
-                                    ) + \
-                                    (1-self.args.loss_weight)*self.custom_train_loss(
-                                    self.labels[train_pred_idx],
-                                    out_lm[self.id_in_parent(sub_idx, train_pred_idx)] 
-                                    )
-                            else:
-                                loss = self.custom_train_loss(
-                                    self.labels[train_pred_idx],
-                                    pred[self.id_in_parent(sub_idx, train_pred_idx)]
-                                    )
+                            # if full_ft:
+                            loss = self.custom_train_loss(
+                                self.labels[train_pred_idx],
+                                pred[self.id_in_parent(sub_idx, train_pred_idx)]
+                                ) + \
+                                self.custom_train_loss(
+                                self.labels[train_pred_idx],
+                                out_lm[self.id_in_parent(sub_idx, train_pred_idx)] 
+                                )
+                            # else:
+                            #     loss = self.custom_train_loss(
+                            #         self.labels[train_pred_idx],
+                            #         pred[self.id_in_parent(sub_idx, train_pred_idx)]
+                            #         )
                         # elif mode == "student":
                         #     loss_gt = self.custom_train_loss(pred[train_pred_idx], self.labels[train_pred_idx])
                         #     loss_kd = loss_kd_only(pred, teacher_output, temp)
@@ -790,9 +811,9 @@ class LM_GNN():
             is_full_ft = self.args.ftmask[epoch] and not self.args.use_external_feat   
             if last_is_full_ft != is_full_ft:
                 last_is_full_ft = is_full_ft
-                if epoch != 1:
-                    logger.info("Grad Norm of last stage:")
-                    self.print_grad_norm()
+                # if epoch != 1:
+                #     logger.info("Grad Norm of last stage:")
+                    # self.print_grad_norm()
                 if is_full_ft:
                     self.switch_to('full_ft')
                     if self.args.peft_start > 0 and epoch>=self.args.peft_start:
