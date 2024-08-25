@@ -608,6 +608,8 @@ class LM_GNN():
             # for 采样相邻节点id kernel_size为train_pred_idx， 扩充grad_padding为grad_idx
             num_batches = len(self.graph_loader)
             interval = num_batches//10
+            torch.cuda.empty_cache()    
+            gc.collect() 
             with tqdm(total=num_batches, desc=f'train {epoch}/{self.args.n_epochs}', unit='batch', file=open(os.devnull, 'w')) as pbar:
                 with self.graph_loader.enable_cpu_affinity():
                     for i, (sub_idx, train_pred_idx, blocks) in enumerate(self.graph_loader):
