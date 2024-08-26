@@ -12,7 +12,7 @@ pip install dgl==1.1.3 -f https://data.dgl.ai/wheels/cu117/repo.html
 pip install transformers evaluate gdown networkx colorlog accelerate accuracy
 pip install peft --no-dependencies
 pip install optuna # for hp search
-pip install deepspeed # recommend using deepspeed if you want to finetune LM by your self
+pip install deepspeed==0.14.5 # recommend using deepspeed if you want to finetune LM by your self
 ```
 ## Run
 

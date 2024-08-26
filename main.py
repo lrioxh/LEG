@@ -932,5 +932,15 @@ def main():
     logger.info(f"Number of trainable params: {gbc.count_params()}")
 
 
+def count_params():
+    gbc = LM_GNN(parse_args())
+    gbc.load_data()
+    gbc.gen_model()
+    print(f"Params ALL: {gbc.count_params()}")
+    print(f"Params trainable: {gbc.count_params()}")
+    gbc.switch_to('gnn_lora')
+    print(f"Params LoRA: {gbc.count_params()}")
+
 if __name__ == "__main__":
     main()
+    # count_params()
