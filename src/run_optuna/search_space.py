@@ -67,13 +67,13 @@ class Link_GNN_HP_search(Single_HP_search):
 
 class LM_GNN_HP_search(Single_HP_search):
     def setup_search_space(self, args, trial):
-        args.gm_lr = trial.suggest_float("gm_lr", 1e-4, 1e-2, log=True)
-        args.lm_lr = trial.suggest_float("lm_lr", 1e-5, 1e-3, log=True)
+        args.gm_lr = trial.suggest_float("gm_lr", 1e-5, 1e-3, log=True)
+        args.lm_lr = trial.suggest_float("lm_lr", 1e-6, 1e-3, log=True)
         args.wd = trial.suggest_float("wd", 1e-6, 1e-4, log=True)
         # args.gnn_dropout = trial.suggest_float("gnn_dropout", 0.1, 0.8)
-        # args.gnn_num_layers = trial.suggest_int("frozen_padding", 4, 8)
-        # args.gnn_num_layers = trial.suggest_int("warmup", 4, 8)
-        # args.gnn_num_layers = trial.suggest_int("wu_lm", 4, 8)
+        # args.gnn_num_layers = trial.suggest_int("frozen_padding", 0, 3)
+        args.warmup = trial.suggest_categorical("warmup", [10, 20, 30])
+        # args.gnn_num_layers = trial.suggest_int("wu_lm", 0, 3)
         return args
     
     def train(self, args, trial=None):

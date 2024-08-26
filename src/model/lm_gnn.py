@@ -6,6 +6,7 @@ from peft import LoraConfig, PeftModel, TaskType
 from transformers import AutoConfig, AutoModel, DebertaV2Config, DebertaV2Model
 from transformers import logging as transformers_logging
 from src.model.lms.modules import DebertaClassificationHead, SentenceClsHead
+from src.model.gnns.modules.GraphSAGE import SAGE
 
 import copy
 import torch
@@ -82,7 +83,83 @@ class E5_model(nn.Module):
         else:
             return out
 
+class Deberta(nn.Module):
+    def __init__(self, args):
+        super(Deberta, self).__init__()
+        transformers_logging.set_verbosity_error()
+        pretrained_repo = args.pretrained_repo
+        assert pretrained_repo in ["microsoft/deberta-v2-xxlarge"]
+        config = DebertaV2Config.from_pretrained(pretrained_repo)
+        config.num_labels = args.num_labels
+        config.header_dropout_prob = args.header_dropout_prob
+        if not args.use_default_config:
+            config.hidden_dropout_prob = args.hidden_dropout_prob
+            config.attention_probs_dropout_prob = args.attention_dropout_prob
+        else:
+            logger.warning("Using default config")
+        config.save_pretrained(save_directory=args.output_dir)
+        # init modules
+        self.bert_model = DebertaV2Model.from_pretrained(pretrained_repo, config=config)
+        self.head = DebertaClassificationHead(config)
+        if args.use_peft:
+            lora_config = LoraConfig(
+                task_type=TaskType.SEQ_CLS,
+                inference_mode=False,
+                r=args.peft_r,
+                lora_alpha=args.peft_lora_alpha,
+                lora_dropout=args.peft_lora_dropout,
+            )
+            self.bert_model = PeftModel(self.bert_model, lora_config)
+            self.bert_model.print_trainable_parameters()
+
+    def forward(self, input_ids, att_mask, return_hidden=False):
+        bert_out = self.bert_model(input_ids=input_ids, attention_mask=att_mask)
+        out = self.head(bert_out[0])
+        if return_hidden:
+            return out, bert_out[0][:, 0, :]
+        else:
+            return out
+
 # GNNs
+
+
+class GraphSAGE(nn.Module):
+    def __init__(self, args):
+        super(GraphSAGE, self).__init__()
+        if args.use_gpt_preds:
+            self.gnn_model = SAGE(
+                5 * args.hidden_size,
+                args.hidden_size,
+                args.num_labels,
+                args.gnn_num_layers,
+                args.gnn_dropout,
+                use_gpt_preds=True,
+            )
+        else:
+            self.gnn_model = SAGE(
+                args.num_feats,
+                args.hidden_size,
+                args.num_labels,
+                args.gnn_num_layers,
+                args.gnn_dropout,
+                use_gpt_preds=False,
+            )
+
+    def reset_parameters(self):
+        self.gnn_model.reset_parameters()
+
+    def forward(self, x, edge_index):
+        return self.gnn_model(x, edge_index)
+
+    @torch.no_grad()
+    def inference(self, x_all, device, subgraph_loader):
+        xs = []
+        for batch in subgraph_loader:
+            x = self.gnn_model(batch.x.to(device), batch.edge_index.to(device))[: batch.batch_size]
+            xs.append(x.cpu())
+        return torch.cat(xs, dim=0)
+
+
 class ElementWiseLinear(nn.Module):
     def __init__(self, size, weight=True, bias=True, inplace=False):
         super().__init__()
