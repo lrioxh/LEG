@@ -78,7 +78,7 @@ class LM_GNN_HP_search(Single_HP_search):
         return args
     
     def train(self, args, trial=None):
-        gbc = LM_GNN(args)
+        gbc = LM_GNN(args, trial=trial)
         # load data & preprocess
         gbc.load_data()
         gbc.preprocess()#

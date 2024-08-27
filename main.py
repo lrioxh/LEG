@@ -64,7 +64,7 @@ replace_rows = ReplaceRowsFunction.apply
 
         
 class LM_GNN():
-    def __init__(self, args) -> None:
+    def __init__(self, args, **kwargs) -> None:
         self.args = args
         self.epsilon = 1 - math.log(2)
         # dataset = "ogbn-arxiv"
@@ -92,6 +92,8 @@ class LM_GNN():
         self.is_lm = []
         self.require_grad = []
         self.lora_added = False
+        
+        self.trial = kwargs.pop("trial", None)
 
     def reorder_train_idx(self):
         '''邻接重排id'''
@@ -844,7 +846,7 @@ class LM_GNN():
 
             train_acc, val_acc, test_acc, train_loss, val_loss, test_loss, pred = \
                                                                 self.evaluate(evaluator_wrapper, is_full_ft)
-            if prune_tolerate == 0:
+            if self.trial and prune_tolerate == 0:
                 if val_acc < self.args.expected_valid_acc or self.trial.should_prune():
                     logger.critical(
                         f"valid acc {val_acc:.4f} is lower than expected {self.args.expected_valid_acc:.4f}"
