@@ -772,7 +772,7 @@ class LM_GNN():
         )
 
 
-    def run(self, n_running, rseed, prune_tolerate = -3):
+    def run(self, n_running, rseed, prune_tolerate = 1):
         evaluator_wrapper = lambda pred, labels: self.evaluator.eval(
             {"y_pred": pred.argmax(dim=-1, keepdim=True), "y_true": labels} #onehot to cls
         )["acc"]
@@ -817,7 +817,7 @@ class LM_GNN():
             #     pred = None
             # else:
             is_full_ft = self.args.ftmask[epoch] and not self.args.use_external_feat   
-            if is_full_ft: prune_tolerate+=1
+            if is_full_ft: prune_tolerate -= 1
             if last_is_full_ft != is_full_ft:
                 last_is_full_ft = is_full_ft
                 # if epoch != 1:
@@ -926,7 +926,7 @@ def main():
         rseed = gbc.args.seed + i
         seed(rseed)
         gbc.init_loader()
-        val_acc, test_acc = gbc.run(i + 1, rseed, -5)
+        val_acc, test_acc = gbc.run(i + 1, rseed, gbc.args.prune_tolerate)
         val_accs.append(val_acc)
         test_accs.append(test_acc)
 

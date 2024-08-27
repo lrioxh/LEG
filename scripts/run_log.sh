@@ -11,9 +11,8 @@ ckpt_dir=${output_dir}/ckpt
 mkdir -p ${ckpt_dir}
 
 if [[ "$@" == *"--proceed"* ]]; then
-    # 如果提供了 '--proceed'，则追加写入 log.txt
-    python "main.py" "$@" 2>&1 | tee -a "${output_dir}/log.txt"
+    python "main.py" --dataset "${dataset}" --model_type "${model_type}" --suffix "${suffix}" "$@" 2>&1 | tee -a "${output_dir}/run.log"
 else
-    # 如果没有提供 '--proceed'，则覆盖写入 log.txt
-    python "main.py" "$@" 2>&1 | tee "${output_dir}/log.txt"
+    # 如果没有提供 '--proceed'，则覆盖写入 run.log
+    python "main.py" --dataset "${dataset}" --model_type "${model_type}" --suffix "${suffix}" "$@" 2>&1 | tee "${output_dir}/run.log"
 fi
