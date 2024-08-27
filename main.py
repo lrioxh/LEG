@@ -772,7 +772,7 @@ class LM_GNN():
         )
 
 
-    def run(self, n_running, rseed):
+    def run(self, n_running, rseed, prune_tolerate = -3):
         evaluator_wrapper = lambda pred, labels: self.evaluator.eval(
             {"y_pred": pred.argmax(dim=-1, keepdim=True), "y_true": labels} #onehot to cls
         )["acc"]
@@ -803,7 +803,6 @@ class LM_GNN():
         accs, train_accs, val_accs, test_accs = [], [], [], []
         losses, train_losses, val_losses, test_losses = [], [], [], []
         epoch = start_ep + 1
-        n_full_ft = 0
         
         while epoch < self.args.n_epochs + 1:
         # for epoch in range(start_ep + 1, self.args.n_epochs + 1):
@@ -818,7 +817,7 @@ class LM_GNN():
             #     pred = None
             # else:
             is_full_ft = self.args.ftmask[epoch] and not self.args.use_external_feat   
-            if is_full_ft: n_full_ft+=1
+            if is_full_ft: prune_tolerate+=1
             if last_is_full_ft != is_full_ft:
                 last_is_full_ft = is_full_ft
                 # if epoch != 1:
@@ -845,7 +844,7 @@ class LM_GNN():
 
             train_acc, val_acc, test_acc, train_loss, val_loss, test_loss, pred = \
                                                                 self.evaluate(evaluator_wrapper, is_full_ft)
-            if n_full_ft == 3:
+            if prune_tolerate == 0:
                 if val_acc < self.args.expected_valid_acc or self.trial.should_prune():
                     logger.critical(
                         f"valid acc {val_acc:.4f} is lower than expected {self.args.expected_valid_acc:.4f}"
@@ -927,7 +926,7 @@ def main():
         rseed = gbc.args.seed + i
         seed(rseed)
         gbc.init_loader()
-        val_acc, test_acc = gbc.run(i + 1, rseed)
+        val_acc, test_acc = gbc.run(i + 1, rseed, -5)
         val_accs.append(val_acc)
         test_accs.append(test_acc)
 

@@ -71,9 +71,10 @@ class LM_GNN_HP_search(Single_HP_search):
         args.lm_lr = trial.suggest_float("lm_lr", 1e-6, 1e-3, log=True)
         args.wd = trial.suggest_float("wd", 1e-6, 1e-4, log=True)
         # args.gnn_dropout = trial.suggest_float("gnn_dropout", 0.1, 0.8)
-        # args.gnn_num_layers = trial.suggest_int("frozen_padding", 0, 3)
         args.warmup = trial.suggest_categorical("warmup", [10, 20, 30])
-        # args.gnn_num_layers = trial.suggest_int("wu_lm", 0, 3)
+        # # args.gnn_num_layers = trial.suggest_int("wu_lm", 4, 8)
+        # args.kernel_size = trial.suggest_categorical("kernel_size", [2, 4, 8])
+        # args.frozen_padding = trial.suggest_categorical("frozen_padding", [0, 1, 3])
         return args
     
     def train(self, args, trial=None):
@@ -94,7 +95,7 @@ class LM_GNN_HP_search(Single_HP_search):
             # rseed = gbc.args.seed + i
         seed(args.seed)
         gbc.init_loader()
-        val_acc, test_acc = gbc.run(1, args.seed)
+        val_acc, test_acc = gbc.run(1, args.seed, prune_tolerate = -3)
         # val_accs.append(val_acc)
         # test_accs.append(test_acc)
         return val_acc
