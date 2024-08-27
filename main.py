@@ -13,6 +13,7 @@ from functools import lru_cache
 from collections import deque
 from typing import Literal
 
+import optuna
 import dgl
 import numpy as np
 import torch
@@ -802,6 +803,8 @@ class LM_GNN():
         accs, train_accs, val_accs, test_accs = [], [], [], []
         losses, train_losses, val_losses, test_losses = [], [], [], []
         epoch = start_ep + 1
+        n_full_ft = 0
+        
         while epoch < self.args.n_epochs + 1:
         # for epoch in range(start_ep + 1, self.args.n_epochs + 1):
             tic = time.time()         
@@ -815,6 +818,7 @@ class LM_GNN():
             #     pred = None
             # else:
             is_full_ft = self.args.ftmask[epoch] and not self.args.use_external_feat   
+            if is_full_ft: n_full_ft+=1
             if last_is_full_ft != is_full_ft:
                 last_is_full_ft = is_full_ft
                 # if epoch != 1:
@@ -841,7 +845,13 @@ class LM_GNN():
 
             train_acc, val_acc, test_acc, train_loss, val_loss, test_loss, pred = \
                                                                 self.evaluate(evaluator_wrapper, is_full_ft)
-            
+            if n_full_ft == 3:
+                if val_acc < self.args.expected_valid_acc or self.trial.should_prune():
+                    logger.critical(
+                        f"valid acc {val_acc:.4f} is lower than expected {self.args.expected_valid_acc:.4f}"
+                    )
+                    raise optuna.exceptions.TrialPruned()
+                
             toc = time.time()
             total_time += toc - tic
 
