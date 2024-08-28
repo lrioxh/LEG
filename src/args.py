@@ -36,14 +36,14 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=42, help="seed")
     parser.add_argument("--n_runs", type=int, default=1, help="running times")
     parser.add_argument("--ep_blocks", type=int, default=2, help="number of epoch blocks")     
-    parser.add_argument("--ep_gm", type=int, default=6, help="number of epochs for GM only in one block")   
-    parser.add_argument("--ep_full", type=int, default=4, help="number of epochs for full tuning in one block")   
+    parser.add_argument("--ep_gm", type=int, default=7, help="number of epochs for GM only in one block")   
+    parser.add_argument("--ep_full", type=int, default=3, help="number of epochs for full tuning in one block")   
     parser.add_argument("--eval_epoch", type=int, default=1) 
-    parser.add_argument("--gm_lr", type=float, default=5e-4, help="learning rate for GM")
-    parser.add_argument("--lm_lr", type=float, default=1e-4, help="learning rate for LM")
-    parser.add_argument("--wd", type=float, default=1e-6, help="weight decay")    
+    parser.add_argument("--gm_lr", type=float, default=2e-2, help="learning rate for GM")
+    parser.add_argument("--lm_lr", type=float, default=3e-2, help="learning rate for LM")
+    parser.add_argument("--wd", type=float, default=5e-6, help="weight decay")    
     parser.add_argument("--warmup", type=int, default=10, help="epochs for warmup")    
-    parser.add_argument("--wu_lm", type=int, default=2, help="epochs for warmup for LM only")  
+    parser.add_argument("--wu_lm", type=int, default=0, help="epochs for warmup for LM only")  
     parser.add_argument("--loss_reduction", type=str, default='mean', help="Specifies the reduction to apply to the loss output")  
     parser.add_argument("--loss_weight", type=float, default=0.5, help="weight of full loss in the conbined loss")   
     parser.add_argument(
@@ -59,7 +59,7 @@ def parse_args():
     parser.add_argument("--grad_padding", type=int, default=1, help="padding hop for grad scope, -1 means whole graph")
     parser.add_argument("--grad_k", type=int, default=1, help="Number of nodes sampled per hop, -1 means all neighbours")
     parser.add_argument("--grad_size", type=int, default=20, help="Max Grad Size")
-    parser.add_argument("--frozen_padding", type=int, default=5, help="padding size for frozen scope, -1 means whole graph")
+    parser.add_argument("--frozen_padding", type=int, default=3, help="padding size for frozen scope, -1 means whole graph")
 
     # GM
     parser.add_argument("--n_label_iters", type=int, default=2, help="number of label iterations")
@@ -86,7 +86,7 @@ def parse_args():
     
     # LM    
     parser.add_argument("--batch_size_infer", type=int, default=300, help="for LM static embedding")
-    parser.add_argument("--batch_size_train", type=int, default=20, help="for LM warming up")
+    parser.add_argument("--batch_size_train", type=int, default=16, help="for LM warming up")
     # parser.add_argument("--batch_size_eval", type=int, default=200)
     parser.add_argument("--accum_interval", type=int, default=5)    #for LM
     parser.add_argument(
@@ -151,8 +151,9 @@ def parse_args():
     parser.add_argument("--peft_lora_dropout", type=float, default=0.3)
     
     # optuna
-    parser.add_argument("--expected_valid_acc", type=float, default=0.6)
-    parser.add_argument("--n_trials", type=int, default=10)
+    parser.add_argument("--expected_valid_acc", type=float, default=0.5)
+    parser.add_argument("--prune_tolerate", type=int, default=1)
+    parser.add_argument("--n_trials", type=int, default=18)
     parser.add_argument("--load_study", action="store_true", default=False)
     
     args = parser.parse_args()
@@ -162,15 +163,15 @@ def parse_args():
     args.save = f"{args.output_dir}/{args.dataset}/{args.model_type}/{args.suffix}"
     os.makedirs(args.save,exist_ok=True)
     # 可以直接从这里控制：|0: ep从1开始|0 for gnn & 1 for lm+gnn|
-    args.ftmask = [0]+([1 for _ in range(args.ep_full)]+[0 for _ in range(args.ep_gm)])*args.ep_blocks+[1]*5
-    # args.ftmask = [0]+([0 for _ in range(args.ep_gm)]+[1 for _ in range(args.ep_full)])*args.ep_blocks+[1]*5
+    # args.ftmask = [0]+([1 for _ in range(args.ep_full)]+[0 for _ in range(args.ep_gm)])*args.ep_blocks+[1]*5
+    args.ftmask = [0]+([0 for _ in range(args.ep_gm)]+[1 for _ in range(args.ep_full)])*args.ep_blocks+[0]*6+[1]*2
     args.n_epochs = len(args.ftmask)-1
     args.no_attn_dst = True
     args.use_peft = True
     args.fp16 = True
     args.use_labels = True
     # args.use_gpt_preds = True
-    args.debug = -1
+    args.debug = 1000
     # args.proceed = True
     # args.use_external_feat = True
     # args.train_idx_cluster = True
@@ -194,6 +195,9 @@ def _set_lm_and_gnn_type(args):
     if args.model_type == "e5-revgat":
         args.lm_type = "e5-large"
         args.gnn_type = "RevGAT"
+    elif args.model_type == "e5-sage":
+        args.lm_type = "e5-large"
+        args.gnn_type = "GraphSAGE"
     return args
 
 def _set_pretrained_repo(args):
@@ -207,13 +211,14 @@ def _set_pretrained_repo(args):
         "roberta-large": "roberta-large",
         "instructor-xl": "hkunlp/instructor-xl",
         "e5-large-v2": "intfloat/e5-large-v2",
-        "e5-revgat": "intfloat/e5-large",
     }
 
     if args.model_type in dict.keys():
         args.pretrained_repo = dict[args.model_type]
+    elif args.lm_type in dict.keys():
+        args.pretrained_repo = dict[args.lm_type]
     else:
-        assert args.lm_type in dict.keys()
+        assert args.lm_type in dict.keys() or args.model_type in dict.keys()
         # assert args.pretrained_repo in dict[args.lm_type]
     return args
 
