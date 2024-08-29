@@ -178,14 +178,21 @@ class LM_GNN():
             lm_lr = self.args.lm_lr * epoch / self.args.warmup
             # gm_lr = self.args.gm_lr * 0.5*epoch*(1 + 1/self.args.warmup) 
             gm_lr = self.args.gm_lr * epoch / self.args.warmup
-            for i, param_group in enumerate(self.optimizer.param_groups):
+            # for i, param_group in enumerate(self.optimizer.param_groups):
+            #     if self.is_lm[i]:
+            #         param_group["lr"] = lm_lr
+            #     else:
+            #         param_group["lr"] = gm_lr
+        else:
+            lm_lr = self.args.lm_lr * (1 - (epoch-self.args.warmup) / self.args.n_epochs)
+            gm_lr = self.args.gm_lr * (1 - (epoch-self.args.warmup) / self.args.n_epochs)   
+            # lm_lr = self.optimizer.param_groups[0]["lr"]
+            # gm_lr = self.optimizer.param_groups[-1]["lr"]
+        for i, param_group in enumerate(self.optimizer.param_groups):
                 if self.is_lm[i]:
                     param_group["lr"] = lm_lr
                 else:
                     param_group["lr"] = gm_lr
-        else:
-            lm_lr = self.optimizer.param_groups[0]["lr"]
-            gm_lr = self.optimizer.param_groups[-1]["lr"]
         logger.info(f"lm_lr: {lm_lr}, gm_lr: {gm_lr}")
 
     def to_device(self, item):
@@ -293,6 +300,8 @@ class LM_GNN():
 
     # @torch.no_grad()
     def get_feat(self, device='cpu', return_cls = False):
+        torch.cuda.empty_cache()    
+        gc.collect() 
         batch_size = self.args.batch_size_infer
         text_loader = DataLoader(self.text_data, batch_size=batch_size, shuffle=False)
         num_batches = len(text_loader)
@@ -425,7 +434,7 @@ class LM_GNN():
                     batch_size=self.args.kernel_size,
                     shuffle=False,
                     drop_last=False,
-                    num_workers=8)
+                    num_workers=self.args.num_workers)
             else:
                 sampler = dgl.dataloading.ShaDowKHopSampler(grad_block)
                 self.graph_loader = dgl.dataloading.DataLoader(
@@ -433,7 +442,7 @@ class LM_GNN():
                     batch_size=self.args.kernel_size,
                     shuffle=False,
                     drop_last=False,
-                    num_workers=8)
+                    num_workers=self.args.num_workers)
         else:
             # TODO: whole graph
             self.whole_graph = True
@@ -611,6 +620,8 @@ class LM_GNN():
             # for 采样相邻节点id kernel_size为train_pred_idx， 扩充grad_padding为grad_idx
             num_batches = len(self.graph_loader)
             interval = num_batches//10
+            # torch.cuda.empty_cache()    
+            # gc.collect() 
             with tqdm(total=num_batches, desc=f'train {epoch}/{self.args.n_epochs}', unit='batch', file=open(os.devnull, 'w')) as pbar:
                 with self.graph_loader.enable_cpu_affinity():
                     for i, (sub_idx, train_pred_idx, blocks) in enumerate(self.graph_loader):
@@ -630,6 +641,8 @@ class LM_GNN():
                             logger.info(f"grad_idx({len(grad_idx)}) sliced")
                             grad_idx = grad_idx[:self.args.grad_size]
                             
+                        torch.cuda.empty_cache()    
+                        gc.collect() 
                         self.optimizer.zero_grad()
                         # feat = feat.detach()
 
@@ -721,8 +734,8 @@ class LM_GNN():
                             self.optimizer.step()
                         if (i-1) % interval == 0: 
                             logger.info(str(pbar))
-                            torch.cuda.empty_cache()    
-                            gc.collect() 
+                            # torch.cuda.empty_cache()    
+                            # gc.collect() 
                         pbar.update(1)
 
             return evaluator(pred[self.id_in_parent(sub_idx, train_idx)], self.labels[train_idx]), loss.item()
