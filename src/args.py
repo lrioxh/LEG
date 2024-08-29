@@ -36,11 +36,11 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=42, help="seed")
     parser.add_argument("--n_runs", type=int, default=1, help="running times")
     parser.add_argument("--ep_blocks", type=int, default=2, help="number of epoch blocks")     
-    parser.add_argument("--ep_gm", type=int, default=7, help="number of epochs for GM only in one block")   
-    parser.add_argument("--ep_full", type=int, default=3, help="number of epochs for full tuning in one block")   
+    parser.add_argument("--ep_gm", type=int, default=6, help="number of epochs for GM only in one block")   
+    parser.add_argument("--ep_full", type=int, default=4, help="number of epochs for full tuning in one block")   
     parser.add_argument("--eval_epoch", type=int, default=1) 
-    parser.add_argument("--gm_lr", type=float, default=2e-2, help="learning rate for GM")
-    parser.add_argument("--lm_lr", type=float, default=3e-2, help="learning rate for LM")
+    parser.add_argument("--gm_lr", type=float, default=5e-5, help="learning rate for GM")
+    parser.add_argument("--lm_lr", type=float, default=4e-5, help="learning rate for LM")
     parser.add_argument("--wd", type=float, default=5e-6, help="weight decay")    
     parser.add_argument("--warmup", type=int, default=10, help="epochs for warmup")    
     parser.add_argument("--wu_lm", type=int, default=0, help="epochs for warmup for LM only")  
@@ -54,6 +54,8 @@ def parse_args():
     )
     parser.add_argument("--label_smoothing_factor", type=float, default=0.01)
     parser.add_argument("--fp16", action="store_true", default=False)
+    parser.add_argument("--num_workers", type=int, default=4, help="num_workers")   
+    
     # sampling
     parser.add_argument("--kernel_size", type=int, default=8, help="for trainable node kernel")
     parser.add_argument("--grad_padding", type=int, default=1, help="padding hop for grad scope, -1 means whole graph")
@@ -110,6 +112,7 @@ def parse_args():
         "--mode", type=str, default="train", choices=["train", "test", "save_bert_x"]
     )
     parser.add_argument("--deepspeed", type=str, default="ds_config.json")
+    parser.add_argument("--report_to", type=str, default="none")
     
     # parameters for data and model storage
     parser.add_argument("--model_type", type=str, default="e5-revgat")
@@ -163,15 +166,15 @@ def parse_args():
     args.save = f"{args.output_dir}/{args.dataset}/{args.model_type}/{args.suffix}"
     os.makedirs(args.save,exist_ok=True)
     # 可以直接从这里控制：|0: ep从1开始|0 for gnn & 1 for lm+gnn|
-    # args.ftmask = [0]+([1 for _ in range(args.ep_full)]+[0 for _ in range(args.ep_gm)])*args.ep_blocks+[1]*5
-    args.ftmask = [0]+([0 for _ in range(args.ep_gm)]+[1 for _ in range(args.ep_full)])*args.ep_blocks+[0]*6+[1]*2
+    args.ftmask = [0, 1]+([1 for _ in range(args.ep_full)]+[0 for _ in range(args.ep_gm)])*args.ep_blocks+[1]*2+[0]*8
+    # args.ftmask = [0]+([0 for _ in range(args.ep_gm)]+[1 for _ in range(args.ep_full)])*args.ep_blocks+[1]*3
     args.n_epochs = len(args.ftmask)-1
     args.no_attn_dst = True
     args.use_peft = True
     args.fp16 = True
     args.use_labels = True
     # args.use_gpt_preds = True
-    args.debug = 1000
+    args.debug = -1
     # args.proceed = True
     # args.use_external_feat = True
     # args.train_idx_cluster = True
@@ -221,6 +224,7 @@ def _set_pretrained_repo(args):
         assert args.lm_type in dict.keys() or args.model_type in dict.keys()
         # assert args.pretrained_repo in dict[args.lm_type]
     return args
+
 
 
 def _set_dataset_specific_args(args):
