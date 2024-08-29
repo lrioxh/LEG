@@ -106,7 +106,8 @@ class LMTrainer(Trainer):
             deepspeed=self.args.deepspeed,
             fp16=self.args.fp16,
             # bf16=self.args.bf16,
-            label_names = ["labels"]
+            label_names = ["labels"],
+            report_to=self.args.report_to
         )
         return InnerTrainer(
             model=self.model,
