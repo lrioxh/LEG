@@ -36,8 +36,8 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=42, help="seed")
     parser.add_argument("--n_runs", type=int, default=1, help="running times")
     parser.add_argument("--ep_blocks", type=int, default=2, help="number of epoch blocks")     
-    parser.add_argument("--ep_gm", type=int, default=6, help="number of epochs for GM only in one block")   
-    parser.add_argument("--ep_full", type=int, default=4, help="number of epochs for full tuning in one block")   
+    parser.add_argument("--ep_gm", type=int, default=8, help="number of epochs for GM only in one block")   
+    parser.add_argument("--ep_full", type=int, default=2, help="number of epochs for full tuning in one block")   
     parser.add_argument("--eval_epoch", type=int, default=1) 
     parser.add_argument("--gm_lr", type=float, default=5e-5, help="learning rate for GM")
     parser.add_argument("--lm_lr", type=float, default=4e-5, help="learning rate for LM")
@@ -87,7 +87,7 @@ def parse_args():
     parser.add_argument("--temp", type=float, default=1.0, help="temperature of kd")
     
     # LM    
-    parser.add_argument("--batch_size_infer", type=int, default=300, help="for LM static embedding")
+    parser.add_argument("--batch_size_infer", type=int, default=256, help="for LM static embedding")
     parser.add_argument("--batch_size_train", type=int, default=16, help="for LM warming up")
     # parser.add_argument("--batch_size_eval", type=int, default=200)
     parser.add_argument("--accum_interval", type=int, default=5)    #for LM
@@ -149,7 +149,8 @@ def parse_args():
     # peft & lora hyperparams
     parser.add_argument("--peft_start", type=int, default=50, help='epoch that start to train GM with PEFT')
     parser.add_argument("--use_peft", action="store_true", default=False)
-    parser.add_argument("--peft_r", type=int, default=8) #8
+    parser.add_argument("--peft_r_lm", type=int, default=8)
+    parser.add_argument("--peft_r_gm", type=int, default=8)
     parser.add_argument("--peft_lora_alpha", type=float, default=8)
     parser.add_argument("--peft_lora_dropout", type=float, default=0.3)
     
@@ -166,8 +167,8 @@ def parse_args():
     args.save = f"{args.output_dir}/{args.dataset}/{args.model_type}/{args.suffix}"
     os.makedirs(args.save,exist_ok=True)
     # 可以直接从这里控制：|0: ep从1开始|0 for gnn & 1 for lm+gnn|
-    args.ftmask = [0, 1]+([1 for _ in range(args.ep_full)]+[0 for _ in range(args.ep_gm)])*args.ep_blocks+[1]*2+[0]*8
-    # args.ftmask = [0]+([0 for _ in range(args.ep_gm)]+[1 for _ in range(args.ep_full)])*args.ep_blocks+[1]*3
+    args.ftmask = [0, 1]+([1 for _ in range(args.ep_full)]+[0 for _ in range(args.ep_gm)])*args.ep_blocks+ [1]*2+ [0]*8
+    # args.ftmask = [0]+([0 for _ in range(args.ep_gm)]+[1 for _ in range(args.ep_full)])*args.ep_blocks+[0]*6+[1]*2
     args.n_epochs = len(args.ftmask)-1
     args.no_attn_dst = True
     args.use_peft = True
