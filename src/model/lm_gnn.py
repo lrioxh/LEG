@@ -60,7 +60,7 @@ class E5_model(nn.Module):
             lora_config = LoraConfig(   #TODO: 只微调前后层layers_to_transform 
                 task_type=TaskType.SEQ_CLS, # .CAUSAL_LM
                 inference_mode=False,
-                r=args.peft_r,
+                r=args.peft_r_lm,
                 lora_alpha=args.peft_lora_alpha,
                 lora_dropout=args.peft_lora_dropout,
                 # layers_to_transform = [],
@@ -70,7 +70,7 @@ class E5_model(nn.Module):
 
     def average_pool(self, last_hidden_states, attention_mask):  # for E5_model
         last_hidden = last_hidden_states.masked_fill(~attention_mask[..., None].bool(), 0.0)
-        return last_hidden.sum(dim=1) / attention_mask.sum(dim=1)[..., None]
+        return last_hidden.sum(dim=1) / attention_mask.sum(dim=1)[..., None]#(100,512,1024)
 
     def forward(self, input_ids, att_mask, return_hidden=False):
         bert_out = self.bert_model(input_ids=input_ids, attention_mask=att_mask)
@@ -105,7 +105,7 @@ class Deberta(nn.Module):
             lora_config = LoraConfig(
                 task_type=TaskType.SEQ_CLS,
                 inference_mode=False,
-                r=args.peft_r,
+                r=args.peft_r_lm,
                 lora_alpha=args.peft_lora_alpha,
                 lora_dropout=args.peft_lora_dropout,
             )

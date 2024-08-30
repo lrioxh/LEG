@@ -306,9 +306,9 @@ class LM_GNN():
         text_loader = DataLoader(self.text_data, batch_size=batch_size, shuffle=False)
         num_batches = len(text_loader)
         interval = num_batches//10
-        feat = torch.empty((self.n_node, self.args.hidden_size), 
+        feat = torch.empty((self.n_node, self.args.hidden_size), #(1000,1024)
                                 dtype=torch.float16 if self.args.fp16 else torch.float32, device=self.device, requires_grad=False)
-        out = torch.empty((self.n_node, self.n_classes),
+        out = torch.empty((self.n_node, self.n_classes),#(1000,40)
                         dtype=torch.float16 if self.args.fp16 else torch.float32, device=self.device)
         with tqdm(total=num_batches, desc=f'LM inference', unit='batch', file=open(os.devnull, 'w')) as pbar:
         #     with logging_redirect_tqdm():
@@ -497,7 +497,7 @@ class LM_GNN():
                         use_gpt_preds=self.args.use_gpt_preds,
                         lora_params={
                             'use_lora': self.args.use_peft,
-                            'r': self.args.peft_r,
+                            'r': self.args.peft_r_gm,
                             'lora_alpha': self.args.peft_lora_alpha,
                             'lora_dropout': self.args.peft_lora_dropout
                             }
