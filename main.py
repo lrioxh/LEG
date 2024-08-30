@@ -77,6 +77,7 @@ class LM_GNN():
         self.gpt_preds = None
         self.graph = None
         self.graph_loader = None
+        self.graph_loader_sec = None
         self.labels = None
         self.split_idx = None
         self.train_idx = None
@@ -426,8 +427,23 @@ class LM_GNN():
         if self.args.grad_padding > 0:
             # 控制采样：低->高，1随机一个节点，-1所有节点
             grad_block = [self.args.grad_k for _ in range(self.args.grad_padding)]
+            self.args.grad_padding2 = self.args.grad_padding
+            if self.args.secsam_method=="nearby":
+                grad_sec = [self.args.grad_k+1 for _ in range(self.args.grad_padding)]
+            elif self.args.secsam_method=="morehop":
+                self.args.grad_padding2 += 1
+                grad_sec = [self.args.grad_k for _ in range(self.args.grad_padding)]
+            else:
+                raise ValueError("secsam_method")
             if self.args.frozen_padding >= 0: 
                 fz_block = [1]+[-1 for _ in range(self.args.frozen_padding)]
+                sampler_sec = dgl.dataloading.NeighborSampler(fz_block + grad_sec)
+                self.graph_loader_sec = dgl.dataloading.DataLoader(
+                    self.graph, self.train_idx, sampler_sec,
+                    batch_size=self.args.kernel_size,
+                    shuffle=False,
+                    drop_last=False,
+                    num_workers=self.args.num_workers)
                 sampler = dgl.dataloading.NeighborSampler(fz_block + grad_block)
                 self.graph_loader = dgl.dataloading.DataLoader(
                     self.graph, self.train_idx, sampler,
@@ -446,6 +462,7 @@ class LM_GNN():
         else:
             # TODO: whole graph
             self.whole_graph = True
+        ...
 
     def gen_model(self):
 
@@ -624,11 +641,22 @@ class LM_GNN():
             # gc.collect() 
             with tqdm(total=num_batches, desc=f'train {epoch}/{self.args.n_epochs}', unit='batch', file=open(os.devnull, 'w')) as pbar:
                 with self.graph_loader.enable_cpu_affinity():
-                    for i, (sub_idx, train_pred_idx, blocks) in enumerate(self.graph_loader):
+                    for i, ((sub_idx, train_pred_idx, blocks),(_, _, blocks2)) in enumerate(zip(self.graph_loader,self.graph_loader_sec)):
                         if self.args.grad_padding > 0:
                             if self.args.frozen_padding >= 0:
                                 graph = dgl.node_subgraph(self.graph, sub_idx, output_device=self.device)
                                 grad_idx = torch.cat([block.srcdata['_ID'] for block in blocks[-self.args.grad_padding:]], dim=0)
+                                
+                                diff = self.args.grad_size - len(grad_idx)
+                                if diff > 0:
+                                    # logger.info(f"grad_idx({len(grad_idx)}) + {diff}")
+                                    grad_idx2 = torch.cat([block.srcdata['_ID'] for block in blocks2[-self.args.grad_padding2:]], dim=0)
+                                    grad_idx_set = set(grad_idx.tolist())
+                                    grad_idx2_set = set(grad_idx2.tolist())
+                                    diff_list = list(grad_idx2_set - grad_idx_set)
+                                    select = random.sample(diff_list, min(diff, len(diff_list)))
+                                    grad_idx = torch.cat([grad_idx, torch.tensor(select)])
+                                    
                                 feat = feat_train[sub_idx]
                                 train_idx = sub_idx[torch.isin(sub_idx, self.train_idx)]
                             else:

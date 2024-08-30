@@ -67,14 +67,18 @@ class Link_GNN_HP_search(Single_HP_search):
 
 class LM_GNN_HP_search(Single_HP_search):
     def setup_search_space(self, args, trial):
-        args.gm_lr = trial.suggest_float("gm_lr", 1e-5, 1e-3, log=True)
-        args.lm_lr = trial.suggest_float("lm_lr", 1e-6, 1e-3, log=True)
-        args.wd = trial.suggest_float("wd", 1e-6, 1e-4, log=True)
-        args.wu_lm = trial.suggest_categorical("wu_lm", [0, 1])
+        # args.gm_lr = trial.suggest_float("gm_lr", 1e-5, 1e-3, log=True)
+        # args.lm_lr = trial.suggest_float("lm_lr", 1e-6, 1e-3, log=True)
+        # args.wd = trial.suggest_float("wd", 1e-6, 1e-4, log=True)
+        # args.wu_lm = trial.suggest_categorical("wu_lm", [0, 1])
         # args.gnn_dropout = trial.suggest_float("gnn_dropout", 0.1, 0.8)
-        args.warmup = trial.suggest_categorical("warmup", [10, 20, 30])
+        # args.warmup = trial.suggest_categorical("warmup", [10, 20, 30])
         # args.kernel_size = trial.suggest_categorical("kernel_size", [2, 4, 8])
-        # args.frozen_padding = trial.suggest_categorical("frozen_padding", [0, 1, 3])
+        args.secsam_method = trial.suggest_categorical("secsam_method", ["nearby","morehop"])
+        args.frozen_padding = trial.suggest_categorical("frozen_padding", [0, 1, 3])
+        args.peft_r_gm = trial.suggest_categorical("peft_r_gm", [4,8])
+        args.peft_r_lm = trial.suggest_categorical("peft_r_lm", [4,8])
+        args.peft_start = trial.suggest_categorical("peft_start", [12,50])
         return args
     
     def train(self, args, trial=None):

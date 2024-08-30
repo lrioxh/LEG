@@ -39,10 +39,10 @@ def parse_args():
     parser.add_argument("--ep_gm", type=int, default=8, help="number of epochs for GM only in one block")   
     parser.add_argument("--ep_full", type=int, default=2, help="number of epochs for full tuning in one block")   
     parser.add_argument("--eval_epoch", type=int, default=1) 
-    parser.add_argument("--gm_lr", type=float, default=5e-5, help="learning rate for GM")
-    parser.add_argument("--lm_lr", type=float, default=4e-5, help="learning rate for LM")
+    parser.add_argument("--gm_lr", type=float, default=3e-4, help="learning rate for GM")
+    parser.add_argument("--lm_lr", type=float, default=2e-4, help="learning rate for LM")
     parser.add_argument("--wd", type=float, default=5e-6, help="weight decay")    
-    parser.add_argument("--warmup", type=int, default=10, help="epochs for warmup")    
+    parser.add_argument("--warmup", type=int, default=8, help="epochs for warmup")    
     parser.add_argument("--wu_lm", type=int, default=0, help="epochs for warmup for LM only")  
     parser.add_argument("--loss_reduction", type=str, default='mean', help="Specifies the reduction to apply to the loss output")  
     parser.add_argument("--loss_weight", type=float, default=0.5, help="weight of full loss in the conbined loss")   
@@ -60,7 +60,8 @@ def parse_args():
     parser.add_argument("--kernel_size", type=int, default=8, help="for trainable node kernel")
     parser.add_argument("--grad_padding", type=int, default=1, help="padding hop for grad scope, -1 means whole graph")
     parser.add_argument("--grad_k", type=int, default=1, help="Number of nodes sampled per hop, -1 means all neighbours")
-    parser.add_argument("--grad_size", type=int, default=20, help="Max Grad Size")
+    parser.add_argument("--grad_size", type=int, default=16, help="Max Grad Size")
+    parser.add_argument("--secsam_method", type=str, default="nearby",choices=["nearby","morehop"])
     parser.add_argument("--frozen_padding", type=int, default=3, help="padding size for frozen scope, -1 means whole graph")
 
     # GM
@@ -175,7 +176,7 @@ def parse_args():
     args.fp16 = True
     args.use_labels = True
     # args.use_gpt_preds = True
-    args.debug = -1
+    args.debug = 80000
     # args.proceed = True
     # args.use_external_feat = True
     # args.train_idx_cluster = True
