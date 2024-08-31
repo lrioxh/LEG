@@ -429,7 +429,7 @@ class LM_GNN():
             grad_block = [self.args.grad_k for _ in range(self.args.grad_padding)]
             self.args.grad_padding2 = self.args.grad_padding
             if self.args.secsam_method=="nearby":
-                grad_sec = [self.args.grad_k+1 for _ in range(self.args.grad_padding)]
+                grad_sec = [-1 for _ in range(self.args.grad_padding)]
             elif self.args.secsam_method=="morehop":
                 self.args.grad_padding2 += 1
                 grad_sec = [self.args.grad_k for _ in range(self.args.grad_padding)]
@@ -654,8 +654,9 @@ class LM_GNN():
                                     grad_idx_set = set(grad_idx.tolist())
                                     grad_idx2_set = set(grad_idx2.tolist())
                                     diff_list = list(grad_idx2_set - grad_idx_set)
-                                    select = random.sample(diff_list, min(diff, len(diff_list)))
-                                    grad_idx = torch.cat([grad_idx, torch.tensor(select)])
+                                    if len(diff_list) > 0:
+                                        select = random.sample(diff_list, min(diff, len(diff_list)))
+                                        grad_idx = torch.cat([grad_idx, torch.tensor(select)])
                                     
                                 feat = feat_train[sub_idx]
                                 train_idx = sub_idx[torch.isin(sub_idx, self.train_idx)]
@@ -677,6 +678,7 @@ class LM_GNN():
                         # if full_ft:
                         subset = Subset(self.text_data, grad_idx) 
                         dataloader = DataLoader(subset, batch_size=len(grad_idx))
+
                         for _, (input_ids, attention_mask) in enumerate(dataloader):
                             input_ids = input_ids.to(self.device)
                             attention_mask = attention_mask.to(self.device)
