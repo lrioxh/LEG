@@ -30,19 +30,19 @@ def parse_args():
         "GAT implementation on ogbn-arxiv", formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     parser.add_argument("--proceed", action="store_true", default=False, help="Continue to train on presaved ckpt")
-    parser.add_argument("--suffix", type=str, default="main")
+    parser.add_argument("--suffix", type=str, default="optuna1")
     parser.add_argument("--cpu", action="store_true", help="CPU mode. This option overrides --gpu.")
     parser.add_argument("--gpu", type=int, default=0, help="GPU device ID.")
     parser.add_argument("--seed", type=int, default=42, help="seed")
     parser.add_argument("--n_runs", type=int, default=1, help="running times")
-    parser.add_argument("--ep_blocks", type=int, default=2, help="number of epoch blocks")     
-    parser.add_argument("--ep_gm", type=int, default=8, help="number of epochs for GM only in one block")   
+    parser.add_argument("--ep_blocks", type=int, default=1, help="number of epoch blocks")     
+    parser.add_argument("--ep_gm", type=int, default=18, help="number of epochs for GM only in one block")   
     parser.add_argument("--ep_full", type=int, default=2, help="number of epochs for full tuning in one block")   
     parser.add_argument("--eval_epoch", type=int, default=1) 
     parser.add_argument("--gm_lr", type=float, default=3e-4, help="learning rate for GM")
     parser.add_argument("--lm_lr", type=float, default=2e-4, help="learning rate for LM")
     parser.add_argument("--wd", type=float, default=5e-6, help="weight decay")    
-    parser.add_argument("--warmup", type=int, default=8, help="epochs for warmup")    
+    parser.add_argument("--warmup", type=int, default=10, help="epochs for warmup")    
     parser.add_argument("--wu_lm", type=int, default=0, help="epochs for warmup for LM only")  
     parser.add_argument("--loss_reduction", type=str, default='mean', help="Specifies the reduction to apply to the loss output")  
     parser.add_argument("--loss_weight", type=float, default=0.5, help="weight of full loss in the conbined loss")   
@@ -78,7 +78,7 @@ def parse_args():
     parser.add_argument("--edge_drop", type=float, default=0.4, help="edge drop rate")
     parser.add_argument("--log_every", type=int, default=1, help="log every LOG_EVERY epochs")
     parser.add_argument("--plot_curves", action="store_true", help="plot learning curves")
-    parser.add_argument("--save_pred", action="store_true", help="save final predictions")
+    # parser.add_argument("--save_pred", action="store_true", help="save final predictions")
     # parser.add_argument("--save", type=str, default="exp", help="save exp")
     # parser.add_argument("--backbone", type=str, default="rev", help="gcn backbone [deepergcn, wt, deq, rev, gr]")
     parser.add_argument("--group", type=int, default=1, help="num of groups for rev gnns")
@@ -156,7 +156,7 @@ def parse_args():
     parser.add_argument("--peft_lora_dropout", type=float, default=0.3)
     
     # optuna
-    parser.add_argument("--expected_valid_acc", type=float, default=0.5)
+    parser.add_argument("--expected_valid_acc", type=float, default=0)
     parser.add_argument("--prune_tolerate", type=int, default=1)
     parser.add_argument("--n_trials", type=int, default=18)
     parser.add_argument("--load_study", action="store_true", default=False)
@@ -167,8 +167,9 @@ def parse_args():
     args = _set_pretrained_repo(args)
     args.save = f"{args.output_dir}/{args.dataset}/{args.model_type}/{args.suffix}"
     os.makedirs(args.save,exist_ok=True)
+    os.makedirs(f"{args.save}/ckpt",exist_ok=True)
     # 可以直接从这里控制：|0: ep从1开始|0 for gnn & 1 for lm+gnn|
-    args.ftmask = [0, 1]+([1 for _ in range(args.ep_full)]+[0 for _ in range(args.ep_gm)])*args.ep_blocks+ [1]*2+ [0]*8
+    args.ftmask = [0, 1]+([1 for _ in range(args.ep_full)]+[0 for _ in range(args.ep_gm)])*args.ep_blocks
     # args.ftmask = [0]+([0 for _ in range(args.ep_gm)]+[1 for _ in range(args.ep_full)])*args.ep_blocks+[0]*6+[1]*2
     args.n_epochs = len(args.ftmask)-1
     args.no_attn_dst = True

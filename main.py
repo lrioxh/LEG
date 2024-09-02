@@ -175,25 +175,25 @@ class LM_GNN():
     def adjust_learning_rate(self, epoch, full_ft):
         '''lr schedule'''
         # if not self.lm_only:
-        if epoch <= self.args.warmup:     #TODO: 分层调整
-            lm_lr = self.args.lm_lr * epoch / self.args.warmup
-            # gm_lr = self.args.gm_lr * 0.5*epoch*(1 + 1/self.args.warmup) 
-            gm_lr = self.args.gm_lr * epoch / self.args.warmup
-            # for i, param_group in enumerate(self.optimizer.param_groups):
-            #     if self.is_lm[i]:
-            #         param_group["lr"] = lm_lr
-            #     else:
-            #         param_group["lr"] = gm_lr
-        else:
-            lm_lr = self.args.lm_lr * (1 - (epoch-self.args.warmup) / self.args.n_epochs)
-            gm_lr = self.args.gm_lr * (1 - (epoch-self.args.warmup) / self.args.n_epochs)   
-            # lm_lr = self.optimizer.param_groups[0]["lr"]
-            # gm_lr = self.optimizer.param_groups[-1]["lr"]
-        for i, param_group in enumerate(self.optimizer.param_groups):
-                if self.is_lm[i]:
-                    param_group["lr"] = lm_lr
-                else:
-                    param_group["lr"] = gm_lr
+        # if epoch <= self.args.warmup:     #TODO: 分层调整
+        #     lm_lr = self.args.lm_lr * epoch / self.args.warmup
+        #     # gm_lr = self.args.gm_lr * 0.5*epoch*(1 + 1/self.args.warmup) 
+        #     gm_lr = self.args.gm_lr * epoch / self.args.warmup
+        #     # for i, param_group in enumerate(self.optimizer.param_groups):
+        #     #     if self.is_lm[i]:
+        #     #         param_group["lr"] = lm_lr
+        #     #     else:
+        #     #         param_group["lr"] = gm_lr
+        # else:
+            # lm_lr = self.args.lm_lr * (1 - (epoch-self.args.warmup) / self.args.n_epochs)
+            # gm_lr = self.args.gm_lr * (1 - (epoch-self.args.warmup) / self.args.n_epochs)   
+        lm_lr = self.optimizer.param_groups[0]["lr"]
+        gm_lr = self.optimizer.param_groups[-1]["lr"]
+        # for i, param_group in enumerate(self.optimizer.param_groups):
+        #         if self.is_lm[i]:
+        #             param_group["lr"] = lm_lr
+        #         else:
+        #             param_group["lr"] = gm_lr
         logger.info(f"lm_lr: {lm_lr}, gm_lr: {gm_lr}")
 
     def to_device(self, item):
@@ -202,7 +202,7 @@ class LM_GNN():
             
     def save_pred(self, pred, run_num, kd_dir):
         os.makedirs(kd_dir,exist_ok=True)
-        fname = os.path.join(kd_dir, "best_pred_run{}.pt".format(run_num))
+        fname = os.path.join(kd_dir, f"best_pred_{run_num}.pt")
         torch.save(pred.cpu(), fname)  
         
     def save_model(self, run_num, epoch):
@@ -214,9 +214,9 @@ class LM_GNN():
             fname_lm = os.path.join(out_dir, f"{epoch}_run_{run_num}_lm.pt")
             torch.save(self.model_lm.state_dict(), fname_lm)  
         
-    def save_stat(self, epoch, full_ft, name):
+    def save_stat(self, epoch, full_ft, name, pred = None):
         out_dir = f"{self.args.save}/ckpt"
-        fname = os.path.join(out_dir, f"{name}_stat.pt")
+        fname = os.path.join(out_dir, f"{name}_stat.pt", exist_ok=True)
         torch.save({
             'epoch': epoch,
             'gnn_dict': self.model_gnn.state_dict(),
@@ -224,9 +224,14 @@ class LM_GNN():
             'optm_dict': self.optimizer.state_dict(),
             'feat_static': self.feat_static,
             'full_ft': full_ft,
-            'args': self.args,
+            'args': self.args
             # 可以添加其他你需要保存的状态
         }, fname)
+        if pred:
+            os.makedirs(f"{self.args.save}/cached_embs", exist_ok=True)
+            torch.save(pred, f"{self.args.save}/cached_embs/logits_{name}.pt")
+            torch.save(self.feat_static, f"{self.args.save}/cached_embs/x_embs_{name}.pt")
+            logger.warning(f"Saving logits & x_embs to {self.args.save}/cached_embs/_{name}.pt")
         logger.info(f"Saving stat ckpt for ep{epoch} ...")
     
     def load_stat(self):
@@ -912,7 +917,7 @@ class LM_GNN():
                 if mode == "teacher":
                     self.save_pred(final_pred, n_running, self.args.kd_dir)
                 if val_acc > 0.7:
-                    self.save_stat(epoch,is_full_ft,f'best{rseed}')
+                    self.save_stat(epoch, is_full_ft, f'best{rseed}', final_pred)
                     logger.info(f'best{rseed} at ep{epoch} saved')
 
             if epoch == self.args.n_epochs or epoch % self.args.log_every == 0:
@@ -939,10 +944,10 @@ class LM_GNN():
         logger.info(f"Best val acc: {best_val_acc}, Final test acc: {final_test_acc}")
         logger.info("*" * 50)
 
-        if self.args.save_pred:
-            os.makedirs(f"{self.args.output_dir}/cached_embs", exist_ok=True)
-            torch.save(final_pred, f"{self.args.output_dir}/cached_embs/logits_seed{n_running}.pt")
-            logger.warning(f"Saved logits to {self.args.output_dir}/cached_embs/logits_seed{n_running}.pt")
+        # if self.args.save_pred:
+        #     os.makedirs(f"{self.args.output_dir}/cached_embs", exist_ok=True)
+        #     torch.save(final_pred, f"{self.args.output_dir}/cached_embs/logits_seed{n_running}.pt")
+        #     logger.warning(f"Saved logits to {self.args.output_dir}/cached_embs/logits_seed{n_running}.pt")
 
         return best_val_acc, final_test_acc
 
