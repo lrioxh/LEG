@@ -9,7 +9,7 @@ pip install torchdata==0.5.1 torchmetrics==1.0.3
 conda install pyg==2.3.1 -c pyg
 pip install ogb
 pip install dgl==1.1.3 -f https://data.dgl.ai/wheels/cu117/repo.html
-pip install transformers==4.44.0 evaluate gdown networkx colorlog accelerate accuracy
+pip install transformers==4.44.0 evaluate gdown networkx colorlog accelerate accuracy sentencepiece
 pip install peft --no-dependencies
 pip install optuna # for hp search
 pip install deepspeed # recommend using deepspeed if you want to finetune LM by your self

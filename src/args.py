@@ -10,7 +10,9 @@ LM_LIST = [
     "all-mpnet-base-v2",
     "all-MiniLM-L6-v2",
     "e5-large",
+    "deberta-base",
     "deberta-v2-xxlarge",
+    "deberta-v3-base",
     "sentence-t5-large",
     "roberta-large",
     "instructor-xl",
@@ -30,7 +32,7 @@ def parse_args():
         "GAT implementation on ogbn-arxiv", formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     parser.add_argument("--proceed", action="store_true", default=False, help="Continue to train on presaved ckpt")
-    parser.add_argument("--suffix", type=str, default="optuna1")
+    parser.add_argument("--suffix", type=str, default="main")
     parser.add_argument("--cpu", action="store_true", help="CPU mode. This option overrides --gpu.")
     parser.add_argument("--gpu", type=int, default=0, help="GPU device ID.")
     parser.add_argument("--seed", type=int, default=42, help="seed")
@@ -58,10 +60,10 @@ def parse_args():
     parser.add_argument("--num_workers", type=int, default=4, help="num_workers")   
     
     # sampling
-    parser.add_argument("--kernel_size", type=int, default=4, help="for trainable node kernel")
+    parser.add_argument("--kernel_size", type=int, default=8, help="for trainable node kernel")
     parser.add_argument("--grad_padding", type=int, default=1, help="padding hop for grad scope, -1 means whole graph")
     parser.add_argument("--grad_k", type=int, default=1, help="Number of nodes sampled per hop, -1 means all neighbours")
-    parser.add_argument("--grad_size", type=int, default=8, help="Max Grad Size")
+    parser.add_argument("--grad_size", type=int, default=16, help="Max Grad Size")
     parser.add_argument("--secsam_method", type=str, default="nearby",choices=["nearby","morehop"])
     parser.add_argument("--frozen_padding", type=int, default=3, help="padding size for frozen scope, -1 means whole graph")
 
@@ -89,10 +91,11 @@ def parse_args():
     parser.add_argument("--temp", type=float, default=1.0, help="temperature of kd")
     
     # LM    
-    parser.add_argument("--batch_size_infer", type=int, default=100, help="for LM static embedding")
+    parser.add_argument("--batch_size_infer", type=int, default=256, help="for LM static embedding")
     parser.add_argument("--batch_size_train", type=int, default=16, help="for LM warming up")
     # parser.add_argument("--batch_size_eval", type=int, default=200)
     parser.add_argument("--accum_interval", type=int, default=5)    #for LM
+    parser.add_argument("--use_default_config", action="store_true", default=False)
     parser.add_argument(
         "--hidden_dropout_prob",
         type=float,
@@ -117,7 +120,7 @@ def parse_args():
     parser.add_argument("--report_to", type=str, default="none")
     
     # parameters for data and model storage
-    parser.add_argument("--model_type", type=str, default="e5-revgat")
+    parser.add_argument("--model_type", type=str, default="de-sage")
     parser.add_argument("--data_folder", type=str, default="../data")
     parser.add_argument("--dataset", type=str, default="ogbn-arxiv")
     parser.add_argument("--task_type", type=str, default="node_cls")
@@ -177,10 +180,11 @@ def parse_args():
     args.fp16 = True
     args.use_labels = True
     # args.use_gpt_preds = True
-    args.debug = 3000
+    args.debug = 8000
     # args.proceed = True
     # args.use_external_feat = True
     # args.train_idx_cluster = True
+    args.use_default_config = True
     args.deepspeed = None
     args.disable_tqdm = True
     return args
@@ -198,11 +202,14 @@ def load_args(dir):
     return args
 
 def _set_lm_and_gnn_type(args):
-    if args.model_type == "e5-revgat":
+    if "e5" in args.model_type:
         args.lm_type = "e5-large"
+    elif "de" in args.model_type:
+        args.lm_type = "deberta-v3-base"
+    
+    if "revgat" in args.model_type:
         args.gnn_type = "RevGAT"
-    elif args.model_type == "e5-sage":
-        args.lm_type = "e5-large"
+    elif "sage" in args.model_type:
         args.gnn_type = "GraphSAGE"
     return args
 
@@ -211,8 +218,10 @@ def _set_pretrained_repo(args):
         "all-roberta-large-v1": "sentence-transformers/all-roberta-large-v1",
         "all-mpnet-base-v2": "sentence-transformers/all-mpnet-base-v2",
         "all-MiniLM-L6-v2": "sentence-transformers/all-MiniLM-L6-v2",
-        "e5-large": "intfloat/e5-large",
-        "deberta-v2-xxlarge": "microsoft/deberta-v2-xxlarge",
+        "e5-large": "intfloat/e5-large",    #512
+        "deberta-base": "microsoft/deberta-base",   #3000+
+        "deberta-v2-xxlarge": "microsoft/deberta-v2-xxlarge",   #2001
+        "deberta-v3-base": "microsoft/deberta-v3-base",     #2306
         "sentence-t5-large": "sentence-transformers/sentence-t5-large",
         "roberta-large": "roberta-large",
         "instructor-xl": "hkunlp/instructor-xl",
@@ -254,6 +263,7 @@ def _set_dataset_specific_args(args):
         "e5-large": 1024,
         "e5-large-v2": 1024,
         "deberta-v2-xxlarge": 1536,
+        "deberta-v3-base": 768,
         "sentence-t5-large": 768,
         "roberta-large": 1024,
         "instructor-xl": 1024,

@@ -26,7 +26,7 @@ import torch_geometric.transforms as T
 
 from src.utils import set_logging
 from src.misc.revgat.loss import loss_kd_only
-from src.model.lm_gnn import RevGAT, E5_model
+from src.model.lm_gnn import RevGAT, E5_model, GraphSAGE, Deberta
 from src.dataset import load_data_bundle
 from src.args import parse_args, save_args
 import src.lora as lora
@@ -503,13 +503,26 @@ class LM_GNN():
                 self.model_gnn.load_state_dict(torch.load(self.args.ckpt_dir),strict=False)
                 logger.info(f"Loaded PGM from {self.args.ckpt_dir}")
                 self.model_gnn.convs[-1].reset_parameters()
+                
+        elif self.args.gnn_type == "GraphSAGE":
+            print(self.args.n_node_feats)
+            self.model_gnn = GraphSAGE(
+                in_channels=self.args.n_node_feats,
+                hidden_channels=self.args.n_hidden,
+                out_channels=self.n_classes,
+                num_layers=self.args.n_layers,
+                dropout=self.args.dropout,
+                use_gpt_preds=self.args.use_gpt_preds
+            )
         else:
-            raise Exception("Unknown gnn")
+            raise Exception(f"Unknown gnn {self.args.gnn_type}")
         if not self.args.use_external_feat:
             if self.args.lm_type == "e5-large":
                 self.model_lm = E5_model(self.args)
+            elif self.args.lm_type == "deberta-v3-base":
+                self.model_lm = Deberta(self.args)
             else:
-                raise Exception("Unknown lm")
+                raise Exception(f"Unknown lm {self.args.lm_type}")
             
         self.optimizer = optim.RMSprop(self.get_params(init=True, custom_lr=True), lr=self.args.gm_lr, weight_decay=self.args.wd)
         self.require_grad = [0 for _ in self.model_lm.parameters()]
