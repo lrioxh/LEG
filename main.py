@@ -189,10 +189,10 @@ class LM_GNN():
         # lm_lr = self.optimizer.param_groups[0]["lr"]
         # gm_lr = self.optimizer.param_groups[-1]["lr"]
         for i, param_group in enumerate(self.optimizer.param_groups):
-                if self.is_lm[i]:
-                    param_group["lr"] = lm_lr
-                else:
-                    param_group["lr"] = gm_lr
+            if self.is_lm[i]:
+                param_group["lr"] = lm_lr
+            else:
+                param_group["lr"] = gm_lr
         logger.info(f"lm_lr: {lm_lr}, gm_lr: {gm_lr}")
 
     def to_device(self, item):
