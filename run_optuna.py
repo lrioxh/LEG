@@ -35,7 +35,8 @@ def get_search_instance(model_type, use_peft=False):
         return Decoupling_GNN_HP_search
     elif model_type in ["GraphSAGE", "GCN"]:
         return Sampling_GNN_HP_search
-    elif model_type in ["e5-revgat"]:
+    elif lambda s, prefixes, suffixes: s.count('-')==1 and s.split('-')[0] in prefixes and s.split('-')[1] in suffixes\
+                (model_type, ["e5", "de"], ["revgat", "sage"]):
         return LM_GNN_HP_search
     else:
         raise NotImplementedError("not implemented HP search class")

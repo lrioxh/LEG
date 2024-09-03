@@ -12,8 +12,10 @@ import copy
 import torch
 import torch.nn.functional as F
 from dgl import function as fn
+from dgl import DGLGraph
 from dgl.ops import edge_softmax
 from dgl.utils import expand_as_pair
+from dgl.nn import SAGEConv
 
 from src.misc.revgat.rev import memgcn
 from src.misc.revgat.rev.rev_layer import SharedDropout
@@ -51,7 +53,7 @@ class E5_model(nn.Module):
         config = AutoConfig.from_pretrained(pretrained_repo)
         config.num_labels = args.num_labels
         config.header_dropout_prob = args.header_dropout_prob
-        config.save_pretrained(save_directory=args.output_dir)
+        config.save_pretrained(save_directory=args.save)
         # config['name_or_path'] = args.pretrained_dir
         # init modules
         self.bert_model = AutoModel.from_pretrained(pretrained_repo, config=config, add_pooling_layer=False)
@@ -88,8 +90,8 @@ class Deberta(nn.Module):
         super(Deberta, self).__init__()
         transformers_logging.set_verbosity_error()
         pretrained_repo = args.pretrained_repo
-        assert pretrained_repo in ["microsoft/deberta-v2-xxlarge"]
-        config = DebertaV2Config.from_pretrained(pretrained_repo)
+        assert pretrained_repo in ["microsoft/deberta-v3-base"]
+        config = AutoConfig.from_pretrained(pretrained_repo)
         config.num_labels = args.num_labels
         config.header_dropout_prob = args.header_dropout_prob
         if not args.use_default_config:
@@ -97,9 +99,9 @@ class Deberta(nn.Module):
             config.attention_probs_dropout_prob = args.attention_dropout_prob
         else:
             logger.warning("Using default config")
-        config.save_pretrained(save_directory=args.output_dir)
+        config.save_pretrained(save_directory=args.save)
         # init modules
-        self.bert_model = DebertaV2Model.from_pretrained(pretrained_repo, config=config)
+        self.bert_model = AutoModel.from_pretrained(pretrained_repo, config=config)
         self.head = DebertaClassificationHead(config)
         if args.use_peft:
             lora_config = LoraConfig(
@@ -122,43 +124,40 @@ class Deberta(nn.Module):
 
 # GNNs
 
-
 class GraphSAGE(nn.Module):
-    def __init__(self, args):
+    def __init__(self, in_channels: int, hidden_channels: int, out_channels: int, num_layers: int, dropout: float, use_gpt_preds: bool = False):
         super(GraphSAGE, self).__init__()
-        if args.use_gpt_preds:
-            self.gnn_model = SAGE(
-                5 * args.hidden_size,
-                args.hidden_size,
-                args.num_labels,
-                args.gnn_num_layers,
-                args.gnn_dropout,
-                use_gpt_preds=True,
-            )
-        else:
-            self.gnn_model = SAGE(
-                args.num_feats,
-                args.hidden_size,
-                args.num_labels,
-                args.gnn_num_layers,
-                args.gnn_dropout,
-                use_gpt_preds=False,
-            )
+        
+        self.dropout_rate = dropout
+        self.use_gpt_preds = use_gpt_preds
+        
+        if use_gpt_preds:
+            self.encoder = nn.Embedding(out_channels + 1, hidden_channels)
+        
+        self.convs = nn.ModuleList()
+        self.convs.append(SAGEConv(in_channels, hidden_channels,aggregator_type='mean'))
+        
+        for _ in range(num_layers - 2):
+            self.convs.append(SAGEConv(hidden_channels, hidden_channels,aggregator_type='mean'))
+        
+        self.convs.append(SAGEConv(hidden_channels, out_channels,aggregator_type='mean'))
 
     def reset_parameters(self):
-        self.gnn_model.reset_parameters()
+        for conv in self.convs:
+            conv.reset_parameters()
+        if self.use_gpt_preds:
+            self.encoder.reset_parameters()
 
-    def forward(self, x, edge_index):
-        return self.gnn_model(x, edge_index)
-
-    @torch.no_grad()
-    def inference(self, x_all, device, subgraph_loader):
-        xs = []
-        for batch in subgraph_loader:
-            x = self.gnn_model(batch.x.to(device), batch.edge_index.to(device))[: batch.batch_size]
-            xs.append(x.cpu())
-        return torch.cat(xs, dim=0)
-
+    def forward(self, graph: DGLGraph, feat: torch.Tensor) -> torch.Tensor:
+        if hasattr(self, "encoder"):
+            feat = self.encoder(feat)
+            feat = torch.flatten(feat, start_dim=1)
+        for i, conv in enumerate(self.convs):
+            feat = conv(graph, feat)
+            if i < len(self.convs) - 1:
+                feat = feat.relu_()
+                feat = F.dropout(feat, p=self.dropout_rate, training=self.training)
+        return feat
 
 class ElementWiseLinear(nn.Module):
     def __init__(self, size, weight=True, bias=True, inplace=False):
