@@ -66,8 +66,7 @@ replace_rows = ReplaceRowsFunction.apply
 class LM_GNN():
     def __init__(self, args, **kwargs) -> None:
         self.args = args
-        self.epsilon = 1 - math.log(2)
-        # dataset = "ogbn-arxiv"
+        self.epsilon = args.eps if args.eps else 1 - math.log(2)
         self.n_node = 0 
         self.n_classes = 0
         self.device = None
@@ -175,25 +174,25 @@ class LM_GNN():
     def adjust_learning_rate(self, epoch, full_ft):
         '''lr schedule'''
         # if not self.lm_only:
-        # if epoch <= self.args.warmup:     #TODO: 分层调整
-        #     lm_lr = self.args.lm_lr * epoch / self.args.warmup
-        #     # gm_lr = self.args.gm_lr * 0.5*epoch*(1 + 1/self.args.warmup) 
-        #     gm_lr = self.args.gm_lr * epoch / self.args.warmup
-        #     # for i, param_group in enumerate(self.optimizer.param_groups):
-        #     #     if self.is_lm[i]:
-        #     #         param_group["lr"] = lm_lr
-        #     #     else:
-        #     #         param_group["lr"] = gm_lr
-        # else:
-            # lm_lr = self.args.lm_lr * (1 - (epoch-self.args.warmup) / self.args.n_epochs)
-            # gm_lr = self.args.gm_lr * (1 - (epoch-self.args.warmup) / self.args.n_epochs)   
-        lm_lr = self.optimizer.param_groups[0]["lr"]
-        gm_lr = self.optimizer.param_groups[-1]["lr"]
-        # for i, param_group in enumerate(self.optimizer.param_groups):
-        #         if self.is_lm[i]:
-        #             param_group["lr"] = lm_lr
-        #         else:
-        #             param_group["lr"] = gm_lr
+        if epoch <= self.args.warmup:     #TODO: 分层调整
+            lm_lr = self.args.lm_lr * epoch / self.args.warmup
+            # gm_lr = self.args.gm_lr * 0.5*epoch*(1 + 1/self.args.warmup) 
+            gm_lr = self.args.gm_lr * epoch / self.args.warmup
+            # for i, param_group in enumerate(self.optimizer.param_groups):
+            #     if self.is_lm[i]:
+            #         param_group["lr"] = lm_lr
+            #     else:
+            #         param_group["lr"] = gm_lr
+        else:
+            lm_lr = self.args.lm_lr * (1 - (epoch-self.args.warmup) / self.args.n_epochs)
+            gm_lr = self.args.gm_lr * (1 - (epoch-self.args.warmup) / self.args.n_epochs)   
+        # lm_lr = self.optimizer.param_groups[0]["lr"]
+        # gm_lr = self.optimizer.param_groups[-1]["lr"]
+        for i, param_group in enumerate(self.optimizer.param_groups):
+                if self.is_lm[i]:
+                    param_group["lr"] = lm_lr
+                else:
+                    param_group["lr"] = gm_lr
         logger.info(f"lm_lr: {lm_lr}, gm_lr: {gm_lr}")
 
     def to_device(self, item):
@@ -216,7 +215,7 @@ class LM_GNN():
         
     def save_stat(self, epoch, full_ft, name, pred = None):
         out_dir = f"{self.args.save}/ckpt"
-        fname = os.path.join(out_dir, f"{name}_stat.pt", exist_ok=True)
+        fname = os.path.join(out_dir, f"{name}_stat.pt")
         torch.save({
             'epoch': epoch,
             'gnn_dict': self.model_gnn.state_dict(),
@@ -227,7 +226,7 @@ class LM_GNN():
             'args': self.args
             # 可以添加其他你需要保存的状态
         }, fname)
-        if pred:
+        if pred != None:
             os.makedirs(f"{self.args.save}/cached_embs", exist_ok=True)
             torch.save(pred, f"{self.args.save}/cached_embs/logits_{name}.pt")
             torch.save(self.feat_static, f"{self.args.save}/cached_embs/x_embs_{name}.pt")
@@ -710,8 +709,8 @@ class LM_GNN():
                             embs = torch.cat([embs, onehot_labels[grad_idx]], dim=-1)
                         
                         # if full_ft:
-                        if self.args.use_gpt_preds:
-                            embs = torch.cat([self.gpt_preds[grad_idx].to(self.device), embs], dim=-1)
+                        # if self.args.use_gpt_preds:
+                        #     embs = torch.cat([self.gpt_preds[grad_idx].to(self.device), embs], dim=-1)
                         
                         feat = replace_rows(feat, self.id_in_parent(sub_idx, grad_idx), embs)
 
@@ -744,7 +743,7 @@ class LM_GNN():
                                 ) + \
                                 self.custom_train_loss(
                                 self.labels[train_pred_idx],
-                                out_lm[self.id_in_parent(sub_idx, train_pred_idx)] 
+                                out_lm[self.id_in_parent(grad_idx, train_pred_idx)] 
                                 )
                             # else:
                             #     loss = self.custom_train_loss(
@@ -917,8 +916,8 @@ class LM_GNN():
                 if mode == "teacher":
                     self.save_pred(final_pred, n_running, self.args.kd_dir)
                 if val_acc > 0.7:
-                    self.save_stat(epoch, is_full_ft, f'best{rseed}', final_pred)
-                    logger.info(f'best{rseed} at ep{epoch} saved')
+                    self.save_stat(epoch, is_full_ft, f'best_{rseed}', final_pred)
+                    logger.info(f'best_{rseed} at ep{epoch} saved')
 
             if epoch == self.args.n_epochs or epoch % self.args.log_every == 0:
                 logger.info(
