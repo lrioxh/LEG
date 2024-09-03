@@ -66,7 +66,7 @@ replace_rows = ReplaceRowsFunction.apply
 class LM_GNN():
     def __init__(self, args, **kwargs) -> None:
         self.args = args
-        self.epsilon = args.eps if args.eps else 1 - math.log(2)
+        self.epsilon = args.eps if args.eps!=None else 1 - math.log(2)
         self.n_node = 0 
         self.n_classes = 0
         self.device = None
@@ -254,42 +254,57 @@ class LM_GNN():
         logger.info(f"Loaded args: {self.args}")
         return last_epoch, full_ft
     
-    def get_params(self, init_lr=False, grad_only = True, gm_lora = False):
+    def get_params(self, init=False, custom_lr = False, need_name = False, gm_lora = False, grad_only = True):
         params = []
-        if init_lr:
+        if init:
             self.is_lm = []
             if self.model_lm:
-                lmp = [{'params': p, 'lr': self.args.lm_lr} for p in self.model_lm.parameters()]
+                lmp = [{'params': p, 'lr': self.args.lm_lr} for p in self.model_lm.parameters()] if custom_lr else\
+                    list(self.model_lm.parameters())
                 params += lmp
                 self.is_lm += [1 for _ in range(len(lmp))]
             if self.model_gnn:
-                gmp = [{'params': p, 'lr': self.args.gm_lr} for p in self.model_gnn.parameters()]
+                gmp = [{'params': p, 'lr': self.args.gm_lr} for p in self.model_gnn.parameters()]if custom_lr else\
+                    list(self.model_gnn.parameters())
                 params += gmp
                 self.is_lm += [0 for _ in range(len(gmp))]
             if gm_lora: 
                 params = []
                 for n, p in self.model_gnn.named_parameters():
                     if 'lora_' in n:
-                        params.append({'params': p, 'lr': self.args.gm_lr})
+                        if custom_lr:
+                            params.append({'params': p, 'lr': self.args.gm_lr})
+                        else:
+                            params.append(p)
                 return params
             if grad_only:
-                return [p for p in params if p['params'].requires_grad]
-        else:
+                if custom_lr:
+                    return [p for p in params if p['params'].requires_grad]
+                else:
+                    return [p for p in params if p.requires_grad]
+        elif need_name:
             if self.model_lm:
                 params += list(self.model_lm.named_parameters())
             if self.model_gnn:
                 params += list(self.model_gnn.named_parameters())
             if grad_only:
                 return [(n,p) for (n,p) in params if p.requires_grad]
+        else:
+            if self.model_lm:
+                params += list(self.model_lm.parameters())
+            if self.model_gnn:
+                params += list(self.model_gnn.parameters())
+            if grad_only:
+                return [p for p in params if p.requires_grad]
         return params
             
       
     def count_params(self, grad_only=True):
         params = self.get_params(grad_only = grad_only)
-        return sum([p.numel() for (n,p) in params])
+        return sum([p.numel() for p in params])
     
     def print_grad_norm(self):
-        for name, param in self.get_params():
+        for name, param in self.get_params(need_name=True):
             if param.grad is not None:
                 grad_norm = param.grad.norm().item()
                 logger.info(f"Layer: {name} | Gradient Norm: {grad_norm}")
@@ -496,7 +511,7 @@ class LM_GNN():
             else:
                 raise Exception("Unknown lm")
             
-        self.optimizer = optim.RMSprop(self.get_params(init_lr=True), lr=self.args.gm_lr, weight_decay=self.args.wd)
+        self.optimizer = optim.RMSprop(self.get_params(init=True, custom_lr=True), lr=self.args.gm_lr, weight_decay=self.args.wd)
         self.require_grad = [0 for _ in self.model_lm.parameters()]
         return 1
 
@@ -527,7 +542,7 @@ class LM_GNN():
                 self.to_device(self.model_gnn)
                 self.lora_added = True
                 self.args.gm_lr = self.optimizer.param_groups[-1]["lr"]
-                for item in self.get_params(init_lr=True, gm_lora=True):
+                for item in self.get_params(init=True, custom_lr=True, gm_lora=True):
                     self.optimizer.add_param_group(item)
 
             lora.mark_only_lora_as_trainable(self.model_gnn)

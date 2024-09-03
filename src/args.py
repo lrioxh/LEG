@@ -53,14 +53,15 @@ def parse_args():
         choices=["linear", "constant"],
     )
     parser.add_argument("--label_smoothing_factor", type=float, default=0.01)
+    parser.add_argument("--eps", type=float, default=None)
     parser.add_argument("--fp16", action="store_true", default=False)
     parser.add_argument("--num_workers", type=int, default=4, help="num_workers")   
     
     # sampling
-    parser.add_argument("--kernel_size", type=int, default=8, help="for trainable node kernel")
+    parser.add_argument("--kernel_size", type=int, default=4, help="for trainable node kernel")
     parser.add_argument("--grad_padding", type=int, default=1, help="padding hop for grad scope, -1 means whole graph")
     parser.add_argument("--grad_k", type=int, default=1, help="Number of nodes sampled per hop, -1 means all neighbours")
-    parser.add_argument("--grad_size", type=int, default=16, help="Max Grad Size")
+    parser.add_argument("--grad_size", type=int, default=8, help="Max Grad Size")
     parser.add_argument("--secsam_method", type=str, default="nearby",choices=["nearby","morehop"])
     parser.add_argument("--frozen_padding", type=int, default=3, help="padding size for frozen scope, -1 means whole graph")
 
@@ -88,7 +89,7 @@ def parse_args():
     parser.add_argument("--temp", type=float, default=1.0, help="temperature of kd")
     
     # LM    
-    parser.add_argument("--batch_size_infer", type=int, default=256, help="for LM static embedding")
+    parser.add_argument("--batch_size_infer", type=int, default=100, help="for LM static embedding")
     parser.add_argument("--batch_size_train", type=int, default=16, help="for LM warming up")
     # parser.add_argument("--batch_size_eval", type=int, default=200)
     parser.add_argument("--accum_interval", type=int, default=5)    #for LM
@@ -162,11 +163,10 @@ def parse_args():
     parser.add_argument("--load_study", action="store_true", default=False)
     
     args = parser.parse_args()
-    args = _set_dataset_specific_args(args)
     args = _set_lm_and_gnn_type(args)
+    args = _set_dataset_specific_args(args)
     args = _set_pretrained_repo(args)
     args.save = f"{args.output_dir}/{args.dataset}/{args.model_type}/{args.suffix}"
-    os.makedirs(args.save,exist_ok=True)
     os.makedirs(f"{args.save}/ckpt",exist_ok=True)
     # 可以直接从这里控制：|0: ep从1开始|0 for gnn & 1 for lm+gnn|
     args.ftmask = [0, 1]+([1 for _ in range(args.ep_full)]+[0 for _ in range(args.ep_gm)])*args.ep_blocks
@@ -177,7 +177,7 @@ def parse_args():
     args.fp16 = True
     args.use_labels = True
     # args.use_gpt_preds = True
-    args.debug = 80000
+    args.debug = 3000
     # args.proceed = True
     # args.use_external_feat = True
     # args.train_idx_cluster = True
@@ -257,11 +257,10 @@ def _set_dataset_specific_args(args):
         "sentence-t5-large": 768,
         "roberta-large": 1024,
         "instructor-xl": 1024,
-        "e5-revgat": 1024,
     }
 
-    if args.model_type in hidden_size_dict.keys():
-        args.hidden_size = hidden_size_dict[args.model_type]
+    if args.lm_type in hidden_size_dict.keys():
+        args.hidden_size = hidden_size_dict[args.lm_type]
     # elif args.use_bert_x and args.lm_type in hidden_size_dict.keys():
     #     args.num_feats = args.hidden_size = hidden_size_dict[args.lm_type]
     # elif args.use_giant_x:
