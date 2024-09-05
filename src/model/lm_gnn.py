@@ -407,7 +407,6 @@ class RevGAT(nn.Module):
     def __init__(
         self,
         args,
-        n_classes,
         activation,
         dropout=0.0,
         input_drop=0.0,
@@ -423,7 +422,7 @@ class RevGAT(nn.Module):
         super().__init__()
         self.in_feats = args.n_node_feats
         self.n_hidden = args.n_hidden
-        self.n_classes = n_classes
+        self.n_classes = args.num_labels
         self.n_layers = args.n_layers
         self.num_heads = args.n_heads
         self.group = group
@@ -434,11 +433,11 @@ class RevGAT(nn.Module):
             self.input_norm = nn.BatchNorm1d(self.in_feats)
 
         if use_gpt_preds:
-            self.encoder = _init_lora_emb(n_classes + 1, args.n_gpt_embs, lora_params)
+            self.encoder = _init_lora_emb(self.n_classes + 1, args.n_gpt_embs, lora_params)
 
         for i in range(self.n_layers):
             in_hidden = self.num_heads * self.n_hidden if i > 0 else self.in_feats
-            out_hidden = self.n_hidden if i < self.n_layers - 1 else n_classes
+            out_hidden = self.n_hidden if i < self.n_layers - 1 else self.n_classes
             num_heads = self.num_heads if i < self.n_layers - 1 else 1
             out_channels = self.num_heads
 
@@ -496,7 +495,7 @@ class RevGAT(nn.Module):
 
                 self.convs.append(conv)
 
-        self.bias_last = ElementWiseLinear(n_classes, weight=False, bias=True, inplace=True)
+        self.bias_last = ElementWiseLinear(self.n_classes, weight=False, bias=True, inplace=True)
 
         self.input_drop = nn.Dropout(input_drop)
         self.dropout = dropout

@@ -68,7 +68,6 @@ class LM_GNN():
         self.args = args
         self.epsilon = args.eps if args.eps!=None else 1 - math.log(2)
         self.n_node = 0 
-        self.n_classes = 0
         self.device = None
         self.text_data = None
         self.text_token = None
@@ -135,7 +134,7 @@ class LM_GNN():
     
     def cal_labels(self, length, labels, idx):
         '''label编码'''
-        onehot = torch.zeros([length, self.n_classes], device=self.device, 
+        onehot = torch.zeros([length, self.args.num_labels], device=self.device, 
                             #  dtype=torch.float16 if self.args.fp16 else torch.float32
                             )
         if len(idx)>0:
@@ -184,8 +183,10 @@ class LM_GNN():
             #     else:
             #         param_group["lr"] = gm_lr
         else:
-            lm_lr = self.args.lm_lr * (1 - (epoch-self.args.warmup) / self.args.n_epochs)
-            gm_lr = self.args.gm_lr * (1 - (epoch-self.args.warmup) / self.args.n_epochs)   
+            dec = 4 * np.exp(-0.1 * (epoch + 4))
+            # dec = (1 - (epoch-self.args.warmup) / self.args.n_epochs)
+            lm_lr = self.args.lm_lr * dec
+            gm_lr = self.args.gm_lr * dec  
         # lm_lr = self.optimizer.param_groups[0]["lr"]
         # gm_lr = self.optimizer.param_groups[-1]["lr"]
         for i, param_group in enumerate(self.optimizer.param_groups):
@@ -328,7 +329,7 @@ class LM_GNN():
         interval = num_batches//10
         feat = torch.empty((self.n_node, self.args.hidden_size), #(1000,1024)
                                 dtype=torch.float16 if self.args.fp16 else torch.float32, device=self.device, requires_grad=False)
-        out = torch.empty((self.n_node, self.n_classes),#(1000,40)
+        out = torch.empty((self.n_node, self.args.num_labels),#(1000,40)
                         dtype=torch.float16 if self.args.fp16 else torch.float32, device=self.device)
         with tqdm(total=num_batches, desc=f'LM inference', unit='batch', file=open(os.devnull, 'w')) as pbar:
         #     with logging_redirect_tqdm():
@@ -420,23 +421,30 @@ class LM_GNN():
             self.args.n_node_feats += self.args.n_gpt_embs * 5
         
         if self.args.debug > 0:
-            debug_idx = torch.arange(0, self.args.debug)
-            self.train_idx = self.train_idx[self.train_idx < self.args.debug]
-            self.val_idx = self.val_idx[self.val_idx < self.args.debug]
-            self.test_idx = self.test_idx[self.test_idx < self.args.debug]
+            # debug_idx = torch.arange(0, self.args.debug)
+            total = len(self.labels)
+            train_size = int(self.args.debug * len(self.train_idx)/total)
+            val_size = int(self.args.debug * len(self.val_idx)/total)
+            test_size = self.args.debug - train_size - val_size
+            
+            # debug_idx = torch.randperm(len(self.labels))[:self.args.debug]
+            self.train_idx = self.train_idx[torch.randperm(len(self.train_idx))[:train_size]]
+            self.val_idx = self.val_idx[torch.randperm(len(self.val_idx))[:val_size]]
+            self.test_idx = self.test_idx[torch.randperm(len(self.test_idx))[:test_size]]
+            debug_idx = torch.cat((self.train_idx, self.val_idx, self.test_idx))
             self.split_idx["train"] = self.train_idx
             self.split_idx["valid"] = self.val_idx
             self.split_idx["test"] = self.test_idx
-            self.labels = self.labels[:self.args.debug]
+            self.labels = self.labels[debug_idx]
             self.graph = dgl.node_subgraph(self.graph, debug_idx)
             self.text_data = Subset(self.text_data, debug_idx)
             subdata = text_token.subgraph(debug_idx)
             self.text_token = TextDataset(subdata.input_ids,subdata.attention_mask,subdata.y)
         
         self.n_node = self.graph.num_nodes()
-        self.n_classes = (self.labels.max() + 1).item()
+        # self.args.num_labels = (self.labels.max() + 1).item()
         if self.args.use_labels:
-            self.args.n_node_feats += self.n_classes
+            self.args.n_node_feats += self.args.num_labels
         if self.args.train_idx_cluster:
             self.reorder_train_idx()
         return 1
@@ -488,7 +496,6 @@ class LM_GNN():
         if self.args.gnn_type == "RevGAT":
             self.model_gnn = RevGAT(
                 self.args,
-                self.n_classes,
                 activation=F.relu,
                 dropout=self.args.dropout,
                 input_drop=self.args.input_drop,
@@ -509,7 +516,7 @@ class LM_GNN():
             self.model_gnn = GraphSAGE(
                 in_channels=self.args.n_node_feats,
                 hidden_channels=self.args.n_hidden,
-                out_channels=self.n_classes,
+                out_channels=self.args.num_labels,
                 num_layers=self.args.n_layers,
                 dropout=self.args.dropout,
                 use_gpt_preds=self.args.use_gpt_preds
@@ -535,7 +542,6 @@ class LM_GNN():
                 # src_model.to('cpu')
                 self.model_gnn = RevGAT(
                         self.args,
-                        self.n_classes,
                         activation=F.relu,
                         dropout=self.args.dropout,
                         input_drop=self.args.input_drop,
@@ -606,7 +612,7 @@ class LM_GNN():
             
         if self.args.use_labels:
             feat_train = torch.cat([feat_train,       
-                              torch.zeros((self.n_node, self.n_classes), 
+                              torch.zeros((self.n_node, self.args.num_labels), 
                                           device=self.device)],
                               dim=-1)
         if self.args.use_gpt_preds:
@@ -637,7 +643,7 @@ class LM_GNN():
                 for _ in range(self.args.n_label_iters):
                     pred = pred.detach()
                     torch.cuda.empty_cache()
-                    feat_train[unlabel_idx, -self.n_classes:] = F.softmax(pred[unlabel_idx], dim=-1)
+                    feat_train[unlabel_idx, -self.args.num_labels:] = F.softmax(pred[unlabel_idx], dim=-1)
                     pred = self.model_gnn(graph, feat_train)
 
             if mode == "teacher":
@@ -732,7 +738,7 @@ class LM_GNN():
                             onehot_labels = self.cal_labels(self.n_node, self.labels, train_labels_idx)
                             if len(train_labels_idx):
                                 feat[self.id_in_parent(sub_idx, train_labels_idx),
-                                    -self.n_classes:] = onehot_labels[train_labels_idx]
+                                    -self.args.num_labels:] = onehot_labels[train_labels_idx]
                             # if full_ft:
                             embs = torch.cat([embs, onehot_labels[grad_idx]], dim=-1)
                         
@@ -759,7 +765,7 @@ class LM_GNN():
                                 # torch.cuda.empty_cache()
                                 onehot_labels[unlabel_idx] = F.softmax(
                                     pred[self.id_in_parent(sub_idx, unlabel_idx)], dim=-1)
-                                feat[self.id_in_parent(sub_idx, unlabel_idx), -self.n_classes:] \
+                                feat[self.id_in_parent(sub_idx, unlabel_idx), -self.args.num_labels:] \
                                     = onehot_labels[unlabel_idx]
                                 pred = self.model_gnn(graph, feat)
 

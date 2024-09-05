@@ -120,7 +120,7 @@ def parse_args():
     parser.add_argument("--report_to", type=str, default="none")
     
     # parameters for data and model storage
-    parser.add_argument("--model_type", type=str, default="de-sage")
+    parser.add_argument("--model_type", type=str, default="e5-revgat")
     parser.add_argument("--data_folder", type=str, default="../data")
     parser.add_argument("--dataset", type=str, default="ogbn-arxiv")
     parser.add_argument("--task_type", type=str, default="node_cls")
@@ -152,7 +152,7 @@ def parse_args():
     )
      
     # peft & lora hyperparams
-    parser.add_argument("--peft_start", type=int, default=50, help='epoch that start to train GM with PEFT')
+    parser.add_argument("--peft_start", type=int, default=-1, help='epoch that start to train GM with PEFT')
     parser.add_argument("--use_peft", action="store_true", default=False)
     parser.add_argument("--peft_r_lm", type=int, default=8)
     parser.add_argument("--peft_r_gm", type=int, default=8)
@@ -173,6 +173,8 @@ def parse_args():
     os.makedirs(f"{args.save}/ckpt",exist_ok=True)
     # 可以直接从这里控制：|0: ep从1开始|0 for gnn & 1 for lm+gnn|
     args.ftmask = [0, 1]+([1 for _ in range(args.ep_full)]+[0 for _ in range(args.ep_gm)])*args.ep_blocks
+    if args.peft_start>0:
+        args.ftmask = args.ftmask +[1]*2 + [0]*8
     # args.ftmask = [0]+([0 for _ in range(args.ep_gm)]+[1 for _ in range(args.ep_full)])*args.ep_blocks+[0]*6+[1]*2
     args.n_epochs = len(args.ftmask)-1
     args.no_attn_dst = True
@@ -180,7 +182,7 @@ def parse_args():
     args.fp16 = True
     args.use_labels = True
     # args.use_gpt_preds = True
-    args.debug = 8000
+    args.debug = 80000
     # args.proceed = True
     # args.use_external_feat = True
     # args.train_idx_cluster = True
