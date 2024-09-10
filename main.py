@@ -183,7 +183,7 @@ class LM_GNN():
             #     else:
             #         param_group["lr"] = gm_lr
         else:
-            dec = 4 * np.exp(-0.1 * (epoch + 4))
+            dec = 4 * np.exp(-0.1 * (epoch - self.args.warmup + 14))
             # dec = (1 - (epoch-self.args.warmup) / self.args.n_epochs)
             lm_lr = self.args.lm_lr * dec
             gm_lr = self.args.gm_lr * dec  
@@ -214,7 +214,7 @@ class LM_GNN():
             fname_lm = os.path.join(out_dir, f"{epoch}_run_{run_num}_lm.pt")
             torch.save(self.model_lm.state_dict(), fname_lm)  
         
-    def save_stat(self, epoch, full_ft, name, pred = None):
+    def save_stat(self, epoch, full_ft, best, name, pred = None):
         out_dir = f"{self.args.save}/ckpt"
         fname = os.path.join(out_dir, f"{name}_stat.pt")
         torch.save({
@@ -224,7 +224,8 @@ class LM_GNN():
             'optm_dict': self.optimizer.state_dict(),
             'feat_static': self.feat_static,
             'full_ft': full_ft,
-            'args': self.args
+            'args': self.args,
+            'best': best
             # 可以添加其他你需要保存的状态
         }, fname)
         if pred != None:
@@ -240,6 +241,7 @@ class LM_GNN():
         checkpoint = torch.load(fname, map_location=self.device)
         last_epoch = checkpoint['epoch']  # 从上次结束的epoch开始
         full_ft = checkpoint['full_ft'] 
+        best = 0.77
         logger.info(f"Loading last ckpt from {fname}, continue after ep{last_epoch}")
         if 0 < self.args.peft_start <= last_epoch:
             self.switch_to('gnn_lora')     
@@ -250,10 +252,11 @@ class LM_GNN():
         # if self.args.peft_start != last_epoch: 
         self.optimizer.load_state_dict(checkpoint['optm_dict'])
         self.feat_static = checkpoint['feat_static']
-        self.args = checkpoint['args']
+        # self.args = checkpoint['args']
+        # best = checkpoint['best']
         del checkpoint
         logger.info(f"Loaded args: {self.args}")
-        return last_epoch, full_ft
+        return last_epoch, full_ft, best
     
     def get_params(self, init=False, custom_lr = False, need_name = False, gm_lora = False, grad_only = True):
         params = []
@@ -421,17 +424,20 @@ class LM_GNN():
             self.args.n_node_feats += self.args.n_gpt_embs * 5
         
         if self.args.debug > 0:
-            # debug_idx = torch.arange(0, self.args.debug)
-            total = len(self.labels)
-            train_size = int(self.args.debug * len(self.train_idx)/total)
-            val_size = int(self.args.debug * len(self.val_idx)/total)
-            test_size = self.args.debug - train_size - val_size
+            debug_idx = torch.arange(0, self.args.debug)
+            self.train_idx = self.train_idx[self.train_idx < self.args.debug]
+            self.val_idx = self.val_idx[self.val_idx < self.args.debug]
+            self.test_idx = self.test_idx[self.test_idx < self.args.debug]
+            # total = len(self.labels)
+            # train_size = int(self.args.debug * len(self.train_idx)/total)
+            # val_size = int(self.args.debug * len(self.val_idx)/total)
+            # test_size = self.args.debug - train_size - val_size
             
             # debug_idx = torch.randperm(len(self.labels))[:self.args.debug]
-            self.train_idx = self.train_idx[torch.randperm(len(self.train_idx))[:train_size]]
-            self.val_idx = self.val_idx[torch.randperm(len(self.val_idx))[:val_size]]
-            self.test_idx = self.test_idx[torch.randperm(len(self.test_idx))[:test_size]]
-            debug_idx = torch.cat((self.train_idx, self.val_idx, self.test_idx))
+            # self.train_idx = self.train_idx[torch.randperm(len(self.train_idx))[:train_size]]
+            # self.val_idx = self.val_idx[torch.randperm(len(self.val_idx))[:val_size]]
+            # self.test_idx = self.test_idx[torch.randperm(len(self.test_idx))[:test_size]]
+            # debug_idx = torch.cat((self.train_idx, self.val_idx, self.test_idx))
             self.split_idx["train"] = self.train_idx
             self.split_idx["valid"] = self.val_idx
             self.split_idx["test"] = self.test_idx
@@ -865,10 +871,15 @@ class LM_GNN():
         # define model and optimizer
         #e5_revgat
         self.gen_model()
+        
+        # training loop
         start_ep = 0
         last_is_full_ft = True
+        total_time = 0
+        best_val_acc, final_test_acc, best_val_loss = 0, 0, float("inf")
+        final_pred = None
         if self.args.proceed:
-            start_ep, last_is_full_ft = self.load_stat()
+            start_ep, last_is_full_ft,best_val_acc = self.load_stat()
         
         logger.info(f"Number of all params: {self.count_params(grad_only=False)}")
         self.to_device(self.model_gnn)
@@ -877,11 +888,6 @@ class LM_GNN():
         if self.args.wu_lm > 0 and start_ep==0:
             logger.info("Warming up LM")
             self.train_lm()
-
-        # training loop
-        total_time = 0
-        best_val_acc, final_test_acc, best_val_loss = 0, 0, float("inf")
-        final_pred = None
 
         accs, train_accs, val_accs, test_accs = [], [], [], []
         losses, train_losses, val_losses, test_losses = [], [], [], []
@@ -950,9 +956,9 @@ class LM_GNN():
                 if mode == "teacher":
                     self.save_pred(final_pred, n_running, self.args.kd_dir)
                 if val_acc > 0.7:
-                    self.save_stat(epoch, is_full_ft, f'best_{rseed}', final_pred)
+                    self.save_stat(epoch, is_full_ft, best_val_acc, f'best_{rseed}', final_pred)
                     logger.info(f'best_{rseed} at ep{epoch} saved')
-
+        
             if epoch == self.args.n_epochs or epoch % self.args.log_every == 0:
                 logger.info(
                     f"Run: {n_running}/{self.args.n_runs}/{rseed}, Epoch: {epoch}/{self.args.n_epochs}, Average epoch time: {total_time / (epoch-start_ep):.2f}\n"
@@ -967,7 +973,7 @@ class LM_GNN():
             ):
                 l.append(e)
             
-            self.save_stat(epoch,is_full_ft,'last')
+            self.save_stat(epoch, is_full_ft,best_val_acc,'last')
             # if self.lm_only:
             #     self.lm_only = False
             # else:
@@ -976,7 +982,7 @@ class LM_GNN():
         logger.info("*" * 50)
         logger.info(f"Best val acc: {best_val_acc}, Final test acc: {final_test_acc}")
         logger.info("*" * 50)
-
+        self.save_stat(epoch, is_full_ft,best_val_acc,f'last_{rseed}',pred)
         # if self.args.save_pred:
         #     os.makedirs(f"{self.args.output_dir}/cached_embs", exist_ok=True)
         #     torch.save(final_pred, f"{self.args.output_dir}/cached_embs/logits_seed{n_running}.pt")
