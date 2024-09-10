@@ -28,11 +28,8 @@ import torch_geometric.transforms as T
 
 from src.utils import set_logging
 from src.misc.revgat.loss import loss_kd_only
-from src.model.lm_gnn import RevGAT, E5_model
+from src.model.lm_gnn import RevGAT, GraphSAGE
 from src.dataset import load_data_bundle
-
-import src.lora as lora
-from src.trainer import get_trainer_class, TextDataset
 
 logger = logging.getLogger(__name__)
 
@@ -79,9 +76,9 @@ def parse_args():
     parser.add_argument("--n_runs", type=int, default=1, help="running times")
     parser.add_argument("--n_epochs", type=int, default=100, help="number of epochs")     
     parser.add_argument("--eval_epoch", type=int, default=1) 
-    parser.add_argument("--gm_lr", type=float, default=3e-4, help="learning rate for GM")
+    parser.add_argument("--gm_lr", type=float, default=1e-2, help="learning rate for GM")
     parser.add_argument("--wd", type=float, default=5e-6, help="weight decay")    
-    parser.add_argument("--warmup", type=int, default=10, help="epochs for warmup")    
+    parser.add_argument("--warmup", type=int, default=0, help="epochs for warmup")    
     parser.add_argument("--loss_reduction", type=str, default='mean', help="Specifies the reduction to apply to the loss output")  
     parser.add_argument(
         "--lr_scheduler_type",
@@ -117,7 +114,7 @@ def parse_args():
     parser.add_argument("--temp", type=float, default=1.0, help="temperature of kd")
     
     # parameters for data and model storage
-    parser.add_argument("--gnn_type", type=str, default="RevGAT")
+    parser.add_argument("--gnn_type", type=str, default="GraphSAGE")    # RevGAT GraphSAGE
     parser.add_argument("--data_folder", type=str, default="../data")
     parser.add_argument("--dataset", type=str, default="ogbn-arxiv")
     parser.add_argument("--task_type", type=str, default="node_cls")
@@ -425,8 +422,18 @@ class TRAIN_GNN():
                 self.model_gnn.load_state_dict(torch.load(self.args.ckpt_dir),strict=False)
                 logger.info(f"Loaded PGM from {self.args.ckpt_dir}")
                 self.model_gnn.convs[-1].reset_parameters()
+        elif self.args.gnn_type == "GraphSAGE":
+            print(self.args.n_node_feats)
+            self.model_gnn = GraphSAGE(
+                in_channels=self.args.n_node_feats,
+                hidden_channels=self.args.n_hidden,
+                out_channels=self.n_classes,
+                num_layers=self.args.n_layers,
+                dropout=self.args.dropout,
+                use_gpt_preds=self.args.use_gpt_preds
+            )
         else:
-            raise Exception("Unknown gnn")
+            raise Exception(f"Unknown gnn {self.args.gnn_type}")
             
         self.optimizer = optim.RMSprop(self.get_params(init_lr=True), lr=self.args.gm_lr, weight_decay=self.args.wd)
         return 1

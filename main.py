@@ -441,7 +441,8 @@ class LM_GNN():
             self.split_idx["train"] = self.train_idx
             self.split_idx["valid"] = self.val_idx
             self.split_idx["test"] = self.test_idx
-            self.labels = self.labels[debug_idx]
+            # self.labels = self.labels[debug_idx]
+            self.labels = self.labels[:self.args.debug]
             self.graph = dgl.node_subgraph(self.graph, debug_idx)
             self.text_data = Subset(self.text_data, debug_idx)
             subdata = text_token.subgraph(debug_idx)

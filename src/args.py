@@ -40,6 +40,7 @@ def parse_args():
     parser.add_argument("--ep_blocks", type=int, default=2, help="number of epoch blocks")     
     parser.add_argument("--ep_gm", type=int, default=14, help="number of epochs for GM only in one block")   
     parser.add_argument("--ep_full", type=int, default=2, help="number of epochs for full tuning in one block")   
+    parser.add_argument("--ep_eegm", action="store_true", default=False,  help="end to end first, then gnn")  
     parser.add_argument("--eval_epoch", type=int, default=1) 
     parser.add_argument("--gm_lr", type=float, default=6e-4, help="learning rate for GM") #3   6
     parser.add_argument("--lm_lr", type=float, default=5e-4, help="learning rate for LM") #2 3 5
@@ -162,8 +163,9 @@ def parse_args():
     # optuna
     parser.add_argument("--expected_valid_acc", type=float, default=0)
     parser.add_argument("--prune_tolerate", type=int, default=1)
-    parser.add_argument("--n_trials", type=int, default=18)
+    parser.add_argument("--n_trials", type=int, default=16)
     parser.add_argument("--load_study", action="store_true", default=False)
+    parser.add_argument("--sample_hp", action="store_true", default=False)
     
     args = parser.parse_args()
     args = _set_lm_and_gnn_type(args)
@@ -171,15 +173,16 @@ def parse_args():
     args = _set_pretrained_repo(args)
     args.save = f"{args.output_dir}/{args.dataset}/{args.model_type}/{args.suffix}"
     os.makedirs(f"{args.save}/ckpt",exist_ok=True)
-    # 可以直接从这里控制：|0: ep从1开始|0 for gnn & 1 for lm+gnn|
-    # args.ftmask = [0, 1]+([1 for _ in range(args.ep_full)]+[0 for _ in range(args.ep_gm)])*args.ep_blocks
-    # if args.peft_start>0:
-    #     args.ftmask = args.ftmask +[1]*2 + [0]*10
-    
-    args.ftmask = [0]*5+([0 for _ in range(args.ep_gm)]+[1 for _ in range(args.ep_full)])*args.ep_blocks
-    if args.peft_start>0:
-        args.ftmask = args.ftmask + [0]*10 +[1]*2
-    args.ftmask = args.ftmask+[0]*10
+    # 可以直接从这里控制：|0: ep从1开始|0 for gnn & 1 for lm+gnn|   
+    if args.ep_eegm: 
+        args.ftmask = [0, 1]+([1 for _ in range(args.ep_full)]+[0 for _ in range(args.ep_gm)])*args.ep_blocks
+        if args.peft_start>0:
+            args.ftmask = args.ftmask +[1]*2 + [0]*10
+    else: 
+        args.ftmask = [0]*5+([0 for _ in range(args.ep_gm)]+[1 for _ in range(args.ep_full)])*args.ep_blocks
+        if args.peft_start>0:
+            args.ftmask = args.ftmask + [0]*10 +[1]*2
+        args.ftmask = args.ftmask+[0]*10
     
     args.n_epochs = len(args.ftmask)-1
     args.no_attn_dst = True

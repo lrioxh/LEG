@@ -3,7 +3,7 @@ import warnings
 
 from optuna.exceptions import ExperimentalWarning
 
-from .HP_search import Dist_HP_search, Single_HP_search
+from .HP_search import Dist_HP_search, Single_HP_search, Sample_HP_search
 
 from main import LM_GNN, seed
 
@@ -69,15 +69,16 @@ class LM_GNN_HP_search(Single_HP_search):
     def setup_search_space(self, args, trial):
         # args.gm_lr = trial.suggest_float("gm_lr", 3e-3, 0.1, log=True)
         args.gm_lr = trial.suggest_float("gm_lr", 1e-4, 1e-3, log=True)
-        args.lm_lr = trial.suggest_float("lm_lr", 1e-5, 1e-3, log=True)
+        args.lm_lr = trial.suggest_float("lm_lr", 5e-5, 1e-3, log=True)
         # args.wd = trial.suggest_float("wd", 1e-6, 1e-4, log=True)
+        # args.wd = trial.suggest_categorical("wd", [0, 5e-6])
         # args.wu_lm = trial.suggest_categorical("wu_lm", [0, 1])
         # args.eps = trial.suggest_categorical("eps", [None, 1e-3])
         # args.gnn_dropout = trial.suggest_float("gnn_dropout", 0.1, 0.8)
-        args.ep_gm = trial.suggest_categorical("ep_gm", [18,14,10,6])
+        # args.ep_gm = trial.suggest_categorical("ep_gm", [18,14,10,6])
         # args.warmup = trial.suggest_categorical("warmup", [10, 20, 30])
         # args.kernel_size = trial.suggest_categorical("kernel_size", [2, 4, 8])
-        # args.secsam_method = trial.suggest_categorical("secsam_method", ["nearby","morehop"])
+        args.secsam_method = trial.suggest_categorical("secsam_method", ["nearby","morehop"])
         # args.frozen_padding = trial.suggest_categorical("frozen_padding", [0, 1, 3])
         # args.peft_r_gm = trial.suggest_categorical("peft_r_gm", [4,8])
         # args.peft_r_lm = trial.suggest_categorical("peft_r_lm", [4,8])
@@ -100,3 +101,32 @@ class LM_GNN_HP_search(Single_HP_search):
 
         return val_acc
     
+class LM_GNN_HP_sample(Sample_HP_search):
+    def setup_search_space(self, args, trial = None):
+        search_space = {
+            'group_1': [
+                {'ep_gm': 18, 'warmup': 10},
+                {'ep_gm': 14, 'warmup': 8},
+                {'ep_gm': 10, 'warmup': 6},
+            ],
+            'group_2': [
+                {'gm_lr': 6e-4, 'lm_lr': 5e-4},
+                {'gm_lr': 3e-4, 'lm_lr': 2e-4},
+            ]
+        }
+        return search_space
+    
+    def train(self, args, trial=None):
+        gbc = LM_GNN(args, trial=trial)
+        # load data & preprocess
+        gbc.load_data()
+        gbc.preprocess()#
+
+        # to device
+        gbc.prepare()
+
+        seed(args.seed)
+        gbc.init_loader()
+        val_acc, test_acc = gbc.run(1, args.seed, args.prune_tolerate)
+
+        return val_acc

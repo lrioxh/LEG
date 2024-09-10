@@ -12,7 +12,8 @@ from src.run_optuna.search_space import (
     LM_HP_search,
     PEFT_LM_HP_search,
     Sampling_GNN_HP_search,
-    LM_GNN_HP_search
+    LM_GNN_HP_search,
+    LM_GNN_HP_sample
 )
 from src.utils import set_logging
 
@@ -22,7 +23,9 @@ warnings.filterwarnings("ignore", category=ExperimentalWarning, module="optuna.m
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 
-def get_search_instance(model_type, use_peft=False):
+def get_search_instance(model_type, use_peft=False, sample_hp = False):
+    if sample_hp: 
+        return LM_GNN_HP_sample
     if model_type in [
         "all-roberta-large-v1",
         "all-mpnet-base-v2",
@@ -45,7 +48,7 @@ def get_search_instance(model_type, use_peft=False):
 def main():
     set_logging()
     args = parse_args()
-    hp_search = get_search_instance(args.model_type, args.use_peft)(args)
+    hp_search = get_search_instance(args.model_type, args.use_peft, args.sample_hp)(args)
     if args.load_study:
         hp_search.load_study()
     else:

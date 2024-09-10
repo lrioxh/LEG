@@ -1,4 +1,4 @@
-import argparse
+import argparse, os
 
 import numpy as np
 import torch
@@ -9,12 +9,12 @@ from tqdm import tqdm
 from src.dataset import load_data_bundle
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--list_logits", type=str, help="for ensembling")
+parser.add_argument("--dir_logits", type=str, default="/home/lrioxh/code/LEG/out/ogbn-arxiv/cached_logits", help="dir for ensembling logits")
 parser.add_argument("--dataset", type=str, default="ogbn-arxiv", help="for ensembling")
 parser.add_argument("--c_and_s", action="store_true", help="correct and smoothing")
-parser.add_argument("--weights", nargs="+", type=float)
+parser.add_argument("--weights", nargs="+",default=[], type=float)
 parser.add_argument("--start_seed", type=int, default=0)
-args = parser.parse_args()
+
 
 
 def ensembling(list_logits, c_and_s=False):
@@ -55,12 +55,21 @@ def ensembling(list_logits, c_and_s=False):
     return train_acc, val_acc, test_acc
 
 
-def compute():
-    args = parser.parse_args()
+def compute(args):
+    # args = parser.parse_args()
     train_acc_list, val_acc_list, test_acc_list = [], [], []
-    for seed in range(args.start_seed, args.start_seed + 10):
-        list_logits = args.list_logits.split(" ")
-        list_logits = [logits + f"/logits_seed{seed}.pt" for logits in list_logits]
+    list_logits = []
+    for root, dirs, files in os.walk(args.dir_logits):
+        for file in files:
+            # 检查文件后缀名
+            if file.endswith('.pt'):
+                file_path = os.path.join(root, file)
+                list_logits.append(file_path)
+    # for seed in range(args.start_seed, args.start_seed + 10):
+        # list_logits = args.list_logits.split(" ")
+        # list_logits = [logits + f"/logits_seed{seed}.pt" for logits in list_logits]
+        if len(args.weights)==0:
+            args.weights = [1]*len(list_logits)
         train_acc, val_acc, test_acc = ensembling(list_logits, c_and_s=args.c_and_s)
         train_acc_list.append(train_acc)
         val_acc_list.append(val_acc)
@@ -118,4 +127,5 @@ def correct_and_smooth(data, split_idx, y_soft):
 
 
 if __name__ == "__main__":
-    compute()
+    args = parser.parse_args()
+    compute(args)
