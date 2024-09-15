@@ -12,10 +12,16 @@ pip install dgl==1.1.3 -f https://data.dgl.ai/wheels/cu117/repo.html
 pip install transformers==4.44.0 evaluate gdown networkx colorlog accelerate accuracy sentencepiece
 pip install peft --no-dependencies
 pip install optuna # for hp search
-pip install deepspeed # recommend using deepspeed if you want to finetune LM by your self
 ```
 ## Run
 
+for example, the result of E5+GraphSAGE can be obtained by running:
+
 ```bash
-bash scripts/run_log.sh [--proceed]
+bash scripts/run_log.sh --seed 42 [--proceed] 
+```
+
+for model ensembling, put logits obtained above in one directory, and run
+```bash
+python ensemble.py --dir_logits /path/to/logits
 ```

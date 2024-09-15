@@ -13,8 +13,7 @@ parser.add_argument("--dir_logits", type=str, default="/home/lrioxh/code/LEG/out
 parser.add_argument("--dataset", type=str, default="ogbn-arxiv", help="for ensembling")
 parser.add_argument("--c_and_s", action="store_true", help="correct and smoothing")
 parser.add_argument("--weights", nargs="+",default=[], type=float)
-parser.add_argument("--start_seed", type=int, default=0)
-
+parser.add_argument("--start_seed", type=int, default=42)
 
 
 def ensembling(list_logits, c_and_s=False):
@@ -59,21 +58,22 @@ def compute(args):
     # args = parser.parse_args()
     train_acc_list, val_acc_list, test_acc_list = [], [], []
     list_logits = []
-    for root, dirs, files in os.walk(args.dir_logits):
-        for file in files:
-            # 检查文件后缀名
-            if file.endswith('.pt'):
-                file_path = os.path.join(root, file)
-                list_logits.append(file_path)
+    for seed in range(args.start_seed, args.start_seed + 1):
+        for root, dirs, files in os.walk(args.dir_logits):
+            for file in files:
+                # 检查文件后缀名
+                if file.endswith(f'{seed}.pt'):
+                    file_path = os.path.join(root, file)
+                    list_logits.append(file_path)
     # for seed in range(args.start_seed, args.start_seed + 10):
         # list_logits = args.list_logits.split(" ")
         # list_logits = [logits + f"/logits_seed{seed}.pt" for logits in list_logits]
-        if len(args.weights)==0:
-            args.weights = [1]*len(list_logits)
-        train_acc, val_acc, test_acc = ensembling(list_logits, c_and_s=args.c_and_s)
-        train_acc_list.append(train_acc)
-        val_acc_list.append(val_acc)
-        test_acc_list.append(test_acc)
+            if len(args.weights)==0:
+                args.weights = [1]*len(list_logits)
+            train_acc, val_acc, test_acc = ensembling(list_logits, c_and_s=args.c_and_s)
+            train_acc_list.append(train_acc)
+            val_acc_list.append(val_acc)
+            test_acc_list.append(test_acc)
         # print("cur train_acc: {:.2f} ± {:.2f}".format(100 * np.mean(train_acc_list), 100 * np.std(train_acc_list)))
         # print("cur val_acc: {:.2f} ± {:.2f}".format(100 * np.mean(val_acc_list), 100 * np.std(val_acc_list)))
         # print("cur test_acc: {:.2f} ± {:.2f}".format(100 * np.mean(test_acc_list), 100 * np.std(test_acc_list)))

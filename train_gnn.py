@@ -72,13 +72,13 @@ def parse_args():
     parser.add_argument("--suffix", type=str, default="gnn")
     parser.add_argument("--cpu", action="store_true", help="CPU mode. This option overrides --gpu.")
     parser.add_argument("--gpu", type=int, default=0, help="GPU device ID.")
-    parser.add_argument("--seed", type=int, default=0, help="seed")
+    parser.add_argument("--seed", type=int, default=42, help="seed")
     parser.add_argument("--n_runs", type=int, default=1, help="running times")
     parser.add_argument("--n_epochs", type=int, default=100, help="number of epochs")     
     parser.add_argument("--eval_epoch", type=int, default=1) 
-    parser.add_argument("--gm_lr", type=float, default=1e-2, help="learning rate for GM")
+    parser.add_argument("--gm_lr", type=float, default=0.002, help="learning rate for GM")
     parser.add_argument("--wd", type=float, default=5e-6, help="weight decay")    
-    parser.add_argument("--warmup", type=int, default=0, help="epochs for warmup")    
+    parser.add_argument("--warmup", type=int, default=10, help="epochs for warmup")    
     parser.add_argument("--loss_reduction", type=str, default='mean', help="Specifies the reduction to apply to the loss output")  
     parser.add_argument(
         "--lr_scheduler_type",
@@ -87,7 +87,7 @@ def parse_args():
         choices=["linear", "constant"],
     )
     parser.add_argument("--label_smoothing_factor", type=float, default=0.01)
-    parser.add_argument("--eps", type=float, default=1e-3)
+    parser.add_argument("--eps", type=float, default=None)
     parser.add_argument("--num_workers", type=int, default=4, help="num_workers")   
 
     # GM
@@ -114,7 +114,7 @@ def parse_args():
     parser.add_argument("--temp", type=float, default=1.0, help="temperature of kd")
     
     # parameters for data and model storage
-    parser.add_argument("--gnn_type", type=str, default="GraphSAGE")    # RevGAT GraphSAGE
+    parser.add_argument("--gnn_type", type=str, default="RevGAT")    # RevGAT GraphSAGE
     parser.add_argument("--data_folder", type=str, default="../data")
     parser.add_argument("--dataset", type=str, default="ogbn-arxiv")
     parser.add_argument("--task_type", type=str, default="node_cls")
@@ -182,7 +182,6 @@ class TRAIN_GNN():
         self.args = args
         self.epsilon = args.eps if args.eps else 1 - math.log(2)
         self.n_node = 0 
-        self.n_classes = 0
         self.device = None
         self.feat_static = None
         self.gpt_preds = None
@@ -240,7 +239,7 @@ class TRAIN_GNN():
     
     def cal_labels(self, length, labels, idx):
         '''label编码'''
-        onehot = torch.zeros([length, self.n_classes], device=self.device, 
+        onehot = torch.zeros([length, self.args.num_labels], device=self.device, 
                             #  dtype=torch.float16 if self.args.fp16 else torch.float32
                             )
         if len(idx)>0:
@@ -280,19 +279,16 @@ class TRAIN_GNN():
             # gm_lr = self.args.gm_lr * 0.5*epoch*(1 + 1/self.args.warmup) 
             gm_lr = self.args.gm_lr * epoch / self.args.warmup
             # for i, param_group in enumerate(self.optimizer.param_groups):
-        #     #     if self.is_lm[i]:
-        #     #         param_group["lr"] = lm_lr
-        #     #     else:
-        #     #         param_group["lr"] = gm_lr
+            #     param_group["lr"] = gm_lr
         else:
-            # lm_lr = self.args.lm_lr * (1 - (epoch-self.args.warmup) / self.args.n_epochs)
-            gm_lr = self.args.gm_lr * (1 - (epoch-self.args.warmup) / self.args.n_epochs)   
+            # dec = 4 * np.exp(-0.1 * (epoch - self.args.warmup + 14))
+            dec = (1 - (epoch-self.args.warmup) / (self.args.n_epochs*2))
+            # dec = (1 - (epoch-self.args.warmup) / self.args.n_epochs)
+            # dec = 1
+            gm_lr = self.args.gm_lr * dec
         # lm_lr = self.optimizer.param_groups[0]["lr"]
         # gm_lr = self.optimizer.param_groups[-1]["lr"]
         for i, param_group in enumerate(self.optimizer.param_groups):
-                # if self.is_lm[i]:
-        #             param_group["lr"] = lm_lr
-        #         else:
             param_group["lr"] = gm_lr
         logger.info(f"gm_lr: {gm_lr}")
 
@@ -347,7 +343,7 @@ class TRAIN_GNN():
         assert self.args.dataset in [
                 "ogbn-arxiv", "ogbl-citation2", "ogbn-products", "ogbn-arxiv-tape"
             ]
-        data_graph = DglNodePropPredDataset(name=self.args.dataset, root="../dgl_data")
+        data_graph = DglNodePropPredDataset(name=self.args.dataset, root=self.args.data_folder)
         self.evaluator = Evaluator(name=self.args.dataset)
         
         self.split_idx = data_graph.get_idx_split()
@@ -396,9 +392,9 @@ class TRAIN_GNN():
             )
             
         self.n_node = self.graph.num_nodes()
-        self.n_classes = (self.labels.max() + 1).item()
+        self.args.num_labels = (self.labels.max() + 1).item()
         if self.args.use_labels:
-            self.args.n_node_feats += self.n_classes
+            self.args.n_node_feats += self.args.num_labels
         if self.args.train_idx_cluster:
             self.reorder_train_idx()
         return 1
@@ -407,7 +403,6 @@ class TRAIN_GNN():
         if self.args.gnn_type == "RevGAT":
             self.model_gnn = RevGAT(
                 self.args,
-                self.n_classes,
                 activation=F.relu,
                 dropout=self.args.dropout,
                 input_drop=self.args.input_drop,
@@ -427,7 +422,7 @@ class TRAIN_GNN():
             self.model_gnn = GraphSAGE(
                 in_channels=self.args.n_node_feats,
                 hidden_channels=self.args.n_hidden,
-                out_channels=self.n_classes,
+                out_channels=self.args.num_labels,
                 num_layers=self.args.n_layers,
                 dropout=self.args.dropout,
                 use_gpt_preds=self.args.use_gpt_preds
@@ -456,7 +451,7 @@ class TRAIN_GNN():
             
         if self.args.use_labels:
             feat_train = torch.cat([feat_train,       
-                              torch.zeros((self.n_node, self.n_classes), 
+                              torch.zeros((self.n_node, self.args.num_labels), 
                                           device=self.device)],
                               dim=-1)
 
@@ -480,7 +475,7 @@ class TRAIN_GNN():
             for _ in range(self.args.n_label_iters):
                 pred = pred.detach()
                 torch.cuda.empty_cache()
-                feat_train[unlabel_idx, -self.n_classes:] = F.softmax(pred[unlabel_idx], dim=-1)
+                feat_train[unlabel_idx, -self.args.num_labels:] = F.softmax(pred[unlabel_idx], dim=-1)
                 pred = self.model_gnn(graph, feat_train)
 
         if mode == "teacher":
@@ -610,7 +605,7 @@ class TRAIN_GNN():
                 # if mode == "teacher":
                 #     self.save_pred(final_pred, n_running, self.args.kd_dir)
                 if val_acc > 0.7:
-                    self.save_pred(final_pred, f'best{rseed}')
+                    self.save_pred(final_pred, f'best_{rseed}')
                     logger.info(f'best{rseed} at ep{epoch} saved')
 
             if epoch == self.args.n_epochs or epoch % self.args.log_every == 0:
