@@ -32,21 +32,21 @@ def parse_args():
         "GAT implementation on ogbn-arxiv", formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     parser.add_argument("--proceed", action="store_true", default=False, help="Continue to train on presaved ckpt")
-    parser.add_argument("--suffix", type=str, default="main")
+    parser.add_argument("--suffix", type=str, default="opt4")
     parser.add_argument("--cpu", action="store_true", help="CPU mode. This option overrides --gpu.")
     parser.add_argument("--gpu", type=int, default=0, help="GPU device ID.")
     parser.add_argument("--seed", type=int, default=42, help="seed")
     parser.add_argument("--n_runs", type=int, default=1, help="running times")
     parser.add_argument("--ep_blocks", type=int, default=2, help="number of epoch blocks")     
-    parser.add_argument("--ep_gm", type=int, default=14, help="number of epochs for GM only in one block")   
-    parser.add_argument("--ep_full", type=int, default=2, help="number of epochs for full tuning in one block")   
+    parser.add_argument("--ep_gm", type=int, default=0, help="number of epochs for GM only in one block")   
+    parser.add_argument("--ep_full", type=int, default=1, help="number of epochs for full tuning in one block")   
     parser.add_argument("--ep_eegm", action="store_true", default=False,  help="end to end first, then gnn")  
     parser.add_argument("--eval_epoch", type=int, default=1) 
-    parser.add_argument("--gm_lr", type=float, default=6e-4, help="learning rate for GM") #3   6
-    parser.add_argument("--lm_lr", type=float, default=5e-4, help="learning rate for LM") #2 3 5
+    parser.add_argument("--gm_lr", type=float, default=6e-5, help="learning rate for GM") #3   6
+    parser.add_argument("--lm_lr", type=float, default=5e-5, help="learning rate for LM") #2 3 5
     parser.add_argument("--wd", type=float, default=5e-6, help="weight decay")    
-    parser.add_argument("--warmup", type=int, default=8, help="epochs for warmup")    
-    parser.add_argument("--wu_lm", type=int, default=2, help="epochs for warmup for LM only")  
+    parser.add_argument("--warmup", type=int, default=1, help="epochs for warmup")    
+    parser.add_argument("--wu_lm", type=int, default=0, help="epochs for warmup for LM only")  
     parser.add_argument("--loss_reduction", type=str, default='mean', help="Specifies the reduction to apply to the loss output")  
     parser.add_argument("--loss_weight", type=float, default=0.5, help="weight of full loss in the conbined loss")   
     parser.add_argument(
@@ -153,7 +153,7 @@ def parse_args():
     )
      
     # peft & lora hyperparams
-    parser.add_argument("--peft_start", type=int, default=60, help='epoch that start to train GM with PEFT')
+    parser.add_argument("--peft_start", type=int, default=-1, help='epoch that start to train GM with PEFT')
     parser.add_argument("--use_peft", action="store_true", default=False)
     parser.add_argument("--peft_r_lm", type=int, default=8)
     parser.add_argument("--peft_r_gm", type=int, default=8)
@@ -173,30 +173,37 @@ def parse_args():
     args = _set_pretrained_repo(args)
     args.save = f"{args.output_dir}/{args.dataset}/{args.model_type}/{args.suffix}"
     os.makedirs(f"{args.save}/ckpt",exist_ok=True)
-    # 可以直接从这里控制：|0: ep从1开始|0 for gnn & 1 for lm+gnn|   
-    if args.ep_eegm: 
-        args.ftmask = [0, 1]+([1 for _ in range(args.ep_full)]+[0 for _ in range(args.ep_gm)])*args.ep_blocks
-        if args.peft_start>0:
-            args.ftmask = args.ftmask +[1]*2 + [0]*10
-    else: 
-        args.ftmask = [0]*5+([0 for _ in range(args.ep_gm)]+[1 for _ in range(args.ep_full)])*args.ep_blocks
-        if args.peft_start>0:
-            args.ftmask = args.ftmask + [0]*10 +[1]*2
-        args.ftmask = args.ftmask+[0]*10
-    
-    args.n_epochs = len(args.ftmask)-1
     args.no_attn_dst = True
     args.use_peft = True
     args.fp16 = True
     args.use_labels = True
     # args.use_gpt_preds = True
-    args.debug = -1
+    args.debug = 80000
     # args.proceed = True
+    args.ep_eegm = True
     # args.use_external_feat = True
     # args.train_idx_cluster = True
     args.use_default_config = True
     args.deepspeed = None
     args.disable_tqdm = True
+    
+    # 可以直接从这里控制：|0: ep从1开始|0 for gnn & 1 for lm+gnn|   
+    if args.ep_eegm: 
+        args.ftmask = [0, 1]+([1 for _ in range(args.ep_full)]+[0 for _ in range(args.ep_gm)])*args.ep_blocks
+        if args.peft_start>0:
+            args.peft_start = len(args.ftmask) - args.ep_gm
+            args.ftmask = args.ftmask + [1]*args.ep_full + [0]*args.ep_gm
+    else: 
+        args.ftmask = [0]*5+([0 for _ in range(args.ep_gm)]+[1 for _ in range(args.ep_full)])*args.ep_blocks
+        if args.peft_start>0:
+            args.peft_start = len(args.ftmask)
+            args.ftmask = args.ftmask + [0]*args.ep_gm + [1]*args.ep_full
+        args.ftmask = args.ftmask+[0]*args.ep_gm
+    args.ftmask+=[0, 0]
+    
+    # args.peft_start = 99
+    args.n_epochs = len(args.ftmask)-1
+    
     return args
 
 def save_args(args, dir):
