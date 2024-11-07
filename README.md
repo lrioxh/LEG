@@ -18,7 +18,7 @@ pip install optuna # for hp search
 for example, the result of E5+GraphSAGE can be obtained by running:
 
 ```bash
-bash scripts/run_log.sh --seed 42 [--proceed] 
+bash scripts/run_log.sh --seed 42 --gm_lr 0.04 [--proceed] 
 ```
 
 for model ensembling, put logits obtained above in one directory, and run

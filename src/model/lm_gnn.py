@@ -408,6 +408,7 @@ class RevGAT(nn.Module):
         self,
         args,
         activation,
+        gpt_col = 5,
         dropout=0.0,
         input_drop=0.0,
         attn_drop=0.0,
@@ -426,6 +427,7 @@ class RevGAT(nn.Module):
         self.n_layers = args.n_layers
         self.num_heads = args.n_heads
         self.group = group
+        self.gpt_col = gpt_col
 
         self.convs = nn.ModuleList()
         self.norm = nn.BatchNorm1d(self.num_heads * self.n_hidden)
@@ -505,9 +507,9 @@ class RevGAT(nn.Module):
     def forward(self, graph, feat):
         x = feat
         if hasattr(self, "encoder"):
-            embs = self.encoder(x[:, :5].to(torch.long))
+            embs = self.encoder(x[:, :self.gpt_col].to(torch.long))
             embs = torch.flatten(embs, start_dim=1)
-            x = torch.cat([embs, x[:, 5:]], dim=1)
+            x = torch.cat([embs, x[:, self.gpt_col:]], dim=1)
         if hasattr(self, "input_norm"):
             x = self.input_norm(x)
         x = self.input_drop(x)

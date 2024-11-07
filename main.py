@@ -86,6 +86,7 @@ class LM_GNN():
         self.criterion = None
         self.whole_graph = False
         self.dtype=torch.float16 if args.fp16 else torch.float32
+        self.args.grad_padding2 = 0
         
         self.model_lm = None
         self.model_gnn = None
@@ -136,7 +137,7 @@ class LM_GNN():
     def cal_labels(self, length, labels, idx):
         '''label编码'''
         onehot = torch.zeros([length, self.args.num_labels], device=self.device, 
-                             dtype=self.dtype
+                            #  dtype=self.dtype
                             )
         if len(idx)>0:
             onehot[idx, labels[idx, 0]] = 1
@@ -327,9 +328,9 @@ class LM_GNN():
         text_loader = DataLoader(self.text_data, batch_size=batch_size, shuffle=False)
         num_batches = len(text_loader)
         interval = num_batches//10
-        feat = torch.empty((self.n_node, self.args.hidden_size), #(1000,1024)
+        feat = torch.empty((self.n_node, self.args.hidden_size),  #(1000,1024)
                                 dtype=self.dtype, device=self.device)
-        out = torch.empty((self.n_node, self.args.num_labels),#(1000,40)
+        out = torch.empty((self.n_node, self.args.num_labels), #(1000,40)
                         dtype=self.dtype, device=self.device)
         with tqdm(total=num_batches, desc=f'LM inference', unit='batch', file=open(os.devnull, 'w')) as pbar:
         #     with logging_redirect_tqdm():
@@ -338,15 +339,15 @@ class LM_GNN():
                 # lm
                 input_ids = input_ids.to(self.device)
                 attention_mask = attention_mask.to(self.device)
-                # if self.args.fp16:
-                #     with autocast():    
-                #         out[i*batch_size:i*batch_size+input_ids.shape[0]], \
-                #         feat[i*batch_size:i*batch_size+input_ids.shape[0],:self.args.hidden_size] \
-                #                         = self.model_lm(input_ids,attention_mask,return_hidden=True)
-                # else:
-                out[i*batch_size:i*batch_size+input_ids.shape[0]], \
-                feat[i*batch_size:i*batch_size+input_ids.shape[0],:self.args.hidden_size] \
-                                    = self.model_lm(input_ids,attention_mask,return_hidden=True)
+                if self.args.fp16:
+                    with autocast():    
+                        out[i*batch_size:i*batch_size+input_ids.shape[0]], \
+                        feat[i*batch_size:i*batch_size+input_ids.shape[0],:self.args.hidden_size] \
+                                        = self.model_lm(input_ids,attention_mask,return_hidden=True)
+                else:
+                    out[i*batch_size:i*batch_size+input_ids.shape[0]], \
+                    feat[i*batch_size:i*batch_size+input_ids.shape[0],:self.args.hidden_size] \
+                                        = self.model_lm(input_ids,attention_mask,return_hidden=True)
                 
                 if interval == 0: logger.info(str(pbar))
                 elif (i-1) % interval == 0: logger.info(str(pbar))
@@ -425,7 +426,7 @@ class LM_GNN():
                 self.test_idx = self.test_idx[self.test_idx < self.args.debug]
                 self.labels = self.labels[:self.args.debug]
             elif self.args.dataset=='ogbn-products':
-                data_ = torch.load(f'{self.args.data_folder}/ogbn_products_subset.pt')
+                data_ = torch.load(f'{self.args.data_folder}/ogbn_products_subset_.pt')
                 debug_idx = data_.n_id
                 new_idx = torch.arange(0, len(debug_idx))
                 self.train_idx = new_idx[data_.train_mask]
@@ -454,23 +455,25 @@ class LM_GNN():
         if self.args.grad_padding > 0:
             # 控制采样：低->高，1随机一个节点，-1所有节点
             grad_block = [self.args.grad_k for _ in range(self.args.grad_padding)]
-            self.args.grad_padding2 = self.args.grad_padding
             if self.args.secsam_method=="nearby":
+                self.args.grad_padding2 = self.args.grad_padding
                 grad_sec = [-1 for _ in range(self.args.grad_padding)]
             elif self.args.secsam_method=="morehop":
-                self.args.grad_padding2 += 1
-                grad_sec = [self.args.grad_k for _ in range(self.args.grad_padding)]
+                self.args.grad_padding2 = self.args.grad_padding + 1
+                grad_sec = [self.args.grad_k for _ in range(self.args.grad_padding2)]
             else:
-                raise ValueError("secsam_method")
+                grad_sec = []
+                # raise ValueError("secsam_method")
             if self.args.frozen_padding >= 0: 
                 fz_block = [1]+[-1 for _ in range(self.args.frozen_padding)]
-                sampler_sec = dgl.dataloading.NeighborSampler(fz_block + grad_sec)
-                self.graph_loader_sec = dgl.dataloading.DataLoader(
-                    self.graph, self.train_idx, sampler_sec,
-                    batch_size=self.args.kernel_size,
-                    shuffle=False,
-                    drop_last=False,
-                    num_workers=self.args.num_workers)
+                if self.args.grad_padding2 > 0:
+                    sampler_sec = dgl.dataloading.NeighborSampler(fz_block + grad_sec)
+                    self.graph_loader_sec = dgl.dataloading.DataLoader(
+                        self.graph, self.train_idx, sampler_sec,
+                        batch_size=self.args.kernel_size,
+                        shuffle=False,
+                        drop_last=False,
+                        num_workers=self.args.num_workers)
                 sampler = dgl.dataloading.NeighborSampler(fz_block + grad_block)
                 self.graph_loader = dgl.dataloading.DataLoader(
                     self.graph, self.train_idx, sampler,
@@ -541,21 +544,21 @@ class LM_GNN():
                 src_model = self.model_gnn.state_dict()
                 # src_model.to('cpu')
                 self.model_gnn = RevGAT(
-                        self.args,
-                        activation=F.relu,
-                        dropout=self.args.dropout,
-                        input_drop=self.args.input_drop,
-                        attn_drop=self.args.attn_drop,
-                        edge_drop=self.args.edge_drop,
-                        use_attn_dst=not self.args.no_attn_dst,
-                        use_symmetric_norm=self.args.use_norm,
-                        use_gpt_preds=self.args.use_gpt_preds,
-                        lora_params={
-                            'use_lora': self.args.use_peft,
-                            'r': self.args.peft_r_gm,
-                            'lora_alpha': self.args.peft_lora_alpha,
-                            'lora_dropout': self.args.peft_lora_dropout
-                            }
+                    self.args,
+                    activation=F.relu,
+                    dropout=self.args.dropout,
+                    input_drop=self.args.input_drop,
+                    attn_drop=self.args.attn_drop,
+                    edge_drop=self.args.edge_drop,
+                    use_attn_dst=not self.args.no_attn_dst,
+                    use_symmetric_norm=self.args.use_norm,
+                    use_gpt_preds=self.args.use_gpt_preds,
+                    lora_params={
+                        'use_lora': self.args.use_peft,
+                        'r': self.args.peft_r_gm,
+                        'lora_alpha': self.args.peft_lora_alpha,
+                        'lora_dropout': self.args.peft_lora_dropout
+                        }
                     )
                 self.model_gnn.load_state_dict(src_model, strict=False)
                 self.to_device(self.model_gnn)
@@ -613,16 +616,18 @@ class LM_GNN():
         if self.args.use_labels:
             feat_train = torch.cat([feat_train,       
                               torch.zeros((self.n_node, self.args.num_labels), 
-                                          device=self.device, dtype=self.dtype)],
+                                          device=self.device,
+                                          dtype=self.dtype
+                                          )],
                               dim=-1)
         if self.args.use_gpt_preds:
             feat_train = torch.cat([self.gpt_preds.to(device=self.device)
                                 ,feat_train],
                                 dim=-1)
-            
+        feat_train = feat_train.to(torch.float32)    
+        self.optimizer.zero_grad()
         if not e2e or self.whole_graph:
             graph = self.graph.to(device=self.device)
-            self.optimizer.zero_grad()
             if self.args.use_labels:
                 mask = torch.rand(self.train_idx.shape) < self.args.mask_rate
                 train_labels_idx = self.train_idx[mask]
@@ -642,7 +647,9 @@ class LM_GNN():
                 unlabel_idx = torch.cat([train_pred_idx, self.val_idx, self.test_idx])
                 for _ in range(self.args.n_label_iters):
                     pred = pred.detach()
-                    feat_train[unlabel_idx, -self.args.num_labels:] = F.softmax(pred[unlabel_idx], dim=-1, dtype=self.dtype)
+                    feat_train[unlabel_idx, -self.args.num_labels:] = F.softmax(pred[unlabel_idx], dim=-1, 
+                                                                                # dtype=self.dtype
+                                                                                )
                     pred = self.model_gnn(graph, feat_train)
 
             if mode == "teacher":
@@ -658,13 +665,13 @@ class LM_GNN():
             else:
                 raise Exception("unkown mode")
 
-            if self.args.fp16:
-                self.scaler.scale(loss).backward()
-                self.scaler.step(self.optimizer)
-                self.scaler.update()
-            else:
-                loss.backward()
-                self.optimizer.step()
+            # if self.args.fp16:
+            #     self.scaler.scale(loss).backward()
+            #     self.scaler.step(self.optimizer)
+            #     self.scaler.update()
+            # else:
+            loss.backward()
+            self.optimizer.step()
 
             return evaluator(pred[self.train_idx], self.labels[self.train_idx]), loss.item()
 
@@ -675,22 +682,26 @@ class LM_GNN():
             interval = num_batches//10
             with tqdm(total=num_batches, desc=f'train {epoch}/{self.args.n_epochs}', unit='batch', file=open(os.devnull, 'w')) as pbar:
                 with self.graph_loader.enable_cpu_affinity():
-                    for i, ((sub_idx, train_pred_idx, blocks),(_, _, blocks2)) in enumerate(zip(self.graph_loader,self.graph_loader_sec)):
+                    if self.graph_loader_sec is not None:
+                        iterator = zip(self.graph_loader, self.graph_loader_sec)
+                    else:
+                        iterator = ((x, (None,None,None)) for x in self.graph_loader)
+                    for i, ((sub_idx, train_pred_idx, blocks), (_, _, blocks2)) in enumerate(iterator):
                         if self.args.grad_padding > 0:
                             if self.args.frozen_padding >= 0:
                                 graph = dgl.node_subgraph(self.graph, sub_idx, output_device=self.device)
                                 grad_idx = torch.cat([block.srcdata['_ID'] for block in blocks[-self.args.grad_padding:]], dim=0)
-                                
-                                diff = self.args.grad_size - len(grad_idx)
-                                if diff > 0:
-                                    # logger.info(f"grad_idx({len(grad_idx)}) + {diff}")
-                                    grad_idx2 = torch.cat([block.srcdata['_ID'] for block in blocks2[-self.args.grad_padding2:]], dim=0)
-                                    grad_idx_set = set(grad_idx.tolist())
-                                    grad_idx2_set = set(grad_idx2.tolist())
-                                    diff_list = list(grad_idx2_set - grad_idx_set)
-                                    if len(diff_list) > 0:
-                                        select = random.sample(diff_list, min(diff, len(diff_list)))
-                                        grad_idx = torch.cat([grad_idx, torch.tensor(select)])
+                                if self.args.grad_padding2 > 0:
+                                    diff = self.args.grad_size - len(grad_idx)
+                                    if diff > 0:
+                                        # logger.info(f"grad_idx({len(grad_idx)}) + {diff}")
+                                        grad_idx2 = torch.cat([block.srcdata['_ID'] for block in blocks2[-self.args.grad_padding2:]], dim=0)
+                                        grad_idx_set = set(grad_idx.tolist())
+                                        grad_idx2_set = set(grad_idx2.tolist())
+                                        diff_list = list(grad_idx2_set - grad_idx_set)
+                                        if len(diff_list) > 0:
+                                            select = random.sample(diff_list, min(diff, len(diff_list)))
+                                            grad_idx = torch.cat([grad_idx, torch.tensor(select)])
                                     
                                 feat = feat_train[sub_idx]
                                 train_idx = sub_idx[torch.isin(sub_idx, self.train_idx)]
@@ -703,16 +714,18 @@ class LM_GNN():
                         if len(grad_idx)>self.args.grad_size:
                             logger.info(f"grad_idx({len(grad_idx)}) sliced")
                             grad_idx = grad_idx[:self.args.grad_size]
-
-                        self.optimizer.zero_grad()
+                        
                         # feat = feat.detach()
 
                         input_ids = self.text_data.tensors[0][grad_idx].to(self.device)
                         attention_mask = self.text_data.tensors[1][grad_idx].to(self.device)
-                        out_lm, embs = self.model_lm(input_ids, attention_mask, return_hidden=True)
                         if self.args.fp16:
-                            out_lm = out_lm.to(dtype=self.dtype)
-                            embs = embs.to(dtype=self.dtype)
+                            with autocast(): 
+                                out_lm, embs = self.model_lm(input_ids, attention_mask, return_hidden=True)
+                                # out_lm = out_lm.to(dtype=self.dtype)
+                                # embs = embs.to(dtype=self.dtype)
+                        else:
+                            out_lm, embs = self.model_lm(input_ids, attention_mask, return_hidden=True)
                         
                         # gnn
                         if self.args.use_labels:
@@ -739,11 +752,13 @@ class LM_GNN():
                             for _ in range(self.args.n_label_iters):
                                 pred = pred.detach()    #requires_grad为false, 梯度向前传播到此为止
                                 onehot_labels[unlabel_idx] = F.softmax(
-                                    pred[self.id_in_parent(sub_idx, unlabel_idx)], dim=-1, dtype=self.dtype)
+                                    pred[self.id_in_parent(sub_idx, unlabel_idx)], dim=-1, 
+                                    # dtype=self.dtype
+                                    )
                                 feat[self.id_in_parent(sub_idx, unlabel_idx), -self.args.num_labels:] \
                                     = onehot_labels[unlabel_idx]
                                 pred = self.model_gnn(graph, feat)
-
+                        del feat, graph
                         if mode == "teacher":
                             # if e2e:
                             loss = self.custom_train_loss(
@@ -765,19 +780,41 @@ class LM_GNN():
                         #     loss = loss_gt * (1 - alpha) + loss_kd * alpha
                         else:
                             raise Exception("unkown mode")
-
-                        if self.args.fp16:
-                            self.scaler.scale(loss).backward()
-                            self.scaler.step(self.optimizer)
-                            self.scaler.update()
+                        if self.args.accumulation_steps>0:
+                            loss = loss / self.args.accumulation_steps
+                            if self.args.fp16:
+                                self.scaler.scale(loss).backward()
+                                if (i + 1) % self.args.accumulation_steps == 0:
+                                    self.scaler.step(self.optimizer)
+                                    self.scaler.update()
+                                    self.optimizer.zero_grad()
+                            else:
+                                loss.backward()
+                                if (i + 1) % self.args.accumulation_steps == 0:
+                                    self.optimizer.step()
+                                    self.optimizer.zero_grad()
                         else:
-                            loss.backward()
-                            self.optimizer.step()
+                            if self.args.fp16:
+                                self.scaler.scale(loss).backward()
+                                self.scaler.step(self.optimizer)
+                                self.scaler.update()
+                            else:
+                                loss.backward()
+                                self.optimizer.step()
+                            self.optimizer.zero_grad()
+                            
                         if (i-1) % interval == 0: 
                             logger.info(str(pbar))
                         pbar.update(1)
-                        del feat, graph
-
+                        
+                    if self.args.accumulation_steps>0 and (i + 1) % self.args.accumulation_steps != 0:
+                        if self.args.fp16:
+                            # self.scaler.scale(loss).backward()
+                            self.scaler.step(self.optimizer)
+                            self.scaler.update()
+                        else:
+                            # loss.backward()
+                            self.optimizer.step()
             return evaluator(pred[self.id_in_parent(sub_idx, train_idx)], self.labels[train_idx]), loss.item()
 
 
@@ -807,13 +844,15 @@ class LM_GNN():
         if self.args.n_label_iters > 0:
             unlabel_idx = torch.cat([self.val_idx, self.test_idx])
             for _ in range(self.args.n_label_iters):
-                feat_eval[unlabel_idx, -self.args.num_labels:] = F.softmax(pred[unlabel_idx], dim=-1, dtype=self.dtype)
+                feat_eval[unlabel_idx, -self.args.num_labels:] = F.softmax(pred[unlabel_idx], dim=-1, 
+                                                                        #    dtype=self.dtype
+                                                                           )
                 pred = self.model_gnn(graph, feat_eval)
         #TODO: eval也计算lmloss
         train_loss = self.custom_eval_loss(self.labels[self.train_idx], pred[self.train_idx])
         val_loss = self.custom_eval_loss(self.labels[self.val_idx], pred[self.val_idx])
         test_loss = self.custom_eval_loss(self.labels[self.test_idx], pred[self.test_idx])
-
+        del graph, feat_eval
         return (
             evaluator(pred[self.train_idx], self.labels[self.train_idx]),
             evaluator(pred[self.val_idx], self.labels[self.val_idx]),
@@ -882,31 +921,32 @@ class LM_GNN():
             self.adjust_learning_rate(epoch, is_e2e)
             
             tic = time.time()   
-            if self.args.fp16:
-                with autocast(): 
-                    acc, loss = self.train(
-                        epoch,
-                        evaluator_wrapper,
-                        is_e2e,
-                        mode=mode,
-                    )
+            # if self.args.fp16:
+            #     with autocast(): 
+            #         acc, loss = self.train(
+            #             epoch,
+            #             evaluator_wrapper,
+            #             is_e2e,
+            #             mode=mode,
+            #         )
                 
-                    toc = time.time()
-                    total_time += toc - tic
+            #         toc = time.time()
+            #         total_time += toc - tic
                     
-                    train_acc, val_acc, test_acc, train_loss, val_loss, test_loss, pred = \
-                                                                self.evaluate(evaluator_wrapper, is_e2e)
-            else:
-                acc, loss = self.train(
-                    epoch,
-                    evaluator_wrapper,
-                    is_e2e,
-                    mode=mode,
-                )
-                toc = time.time()
-                total_time += toc - tic
-                
-                train_acc, val_acc, test_acc, train_loss, val_loss, test_loss, pred = \
+            #         train_acc, val_acc, test_acc, train_loss, val_loss, test_loss, pred = \
+            #                                                     self.evaluate(evaluator_wrapper, is_e2e)
+            # else:
+            acc, loss = self.train(
+                epoch,
+                evaluator_wrapper,
+                is_e2e,
+                mode=mode,
+            )
+            toc = time.time()
+            total_time += toc - tic
+            # torch.cuda.empty_cache()
+            gc.collect()
+            train_acc, val_acc, test_acc, train_loss, val_loss, test_loss, pred = \
                                                                 self.evaluate(evaluator_wrapper, is_e2e)
             if self.trial and prune_tolerate == 0:
                 if val_acc < self.args.expected_valid_acc or self.trial.should_prune():
@@ -923,7 +963,7 @@ class LM_GNN():
             if val_acc > best_val_acc:
                 best_val_loss = val_loss
                 best_val_acc = val_acc
-                final_test_acc = test_acc
+                # final_test_acc = test_acc
                 final_pred = pred
                 # if not self.lm_only:
                 # if mode == "teacher":
@@ -959,6 +999,7 @@ class LM_GNN():
         #     torch.save(final_pred, f"{self.args.output_dir}/cached_embs/logits_seed{n_running}.pt")
         #     logger.warning(f"Saved logits to {self.args.output_dir}/cached_embs/logits_seed{n_running}.pt")
 
+        self.args.proceed = False
         return best_val_acc, final_test_acc
 
 

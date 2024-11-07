@@ -9,18 +9,18 @@ from tqdm import tqdm
 from src.dataset import load_data_bundle
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--dir_logits", type=str, default="/home/lrioxh/code/LEG/out/ogbn-arxiv/cached_logits", help="dir for ensembling logits")
-parser.add_argument("--dataset", type=str, default="ogbn-arxiv", help="for ensembling")
+parser.add_argument("--dir_logits", type=str, default="/home/lrioxh/code/LEG/out/ogbn-products/cached_logits", help="dir for ensembling logits")
+parser.add_argument("--dataset", type=str, default="ogbn-products-sub", help="for ensembling")
 parser.add_argument("--c_and_s", action="store_true", help="correct and smoothing")
 parser.add_argument("--weights", nargs="+",default=[], type=float)
 parser.add_argument("--start_seed", type=int, default=42)
 
 
-def ensembling(list_logits, c_and_s=False):
+def ensembling(list_logits, c_and_s=False, dataset = "ogbn-arxiv"):
     data, split_idx, evaluator = load_data_bundle(
-        "ogbn-arxiv", root="../data", tokenizer=None, tokenize=False
+        dataset, root="../data", tokenizer=None, tokenize=False
     )
-    list_logits = [torch.load(logits).cpu() for logits in list_logits]
+    list_logits = [torch.load(logits).cpu().to(dtype = torch.float32) for logits in list_logits]
     weights = np.asarray(args.weights) / sum(args.weights)
     list_logits = [
         logits.softmax(dim=-1) * weight for logits, weight in zip(list_logits, weights)
@@ -57,8 +57,8 @@ def ensembling(list_logits, c_and_s=False):
 def compute(args):
     # args = parser.parse_args()
     train_acc_list, val_acc_list, test_acc_list = [], [], []
-    list_logits = []
-    for seed in range(args.start_seed, args.start_seed + 1):
+    for seed in range(args.start_seed, args.start_seed + 3):
+        list_logits = []
         for root, dirs, files in os.walk(args.dir_logits):
             for file in files:
                 # 检查文件后缀名
@@ -70,7 +70,7 @@ def compute(args):
         # list_logits = [logits + f"/logits_seed{seed}.pt" for logits in list_logits]
             if len(args.weights)==0:
                 args.weights = [1]*len(list_logits)
-            train_acc, val_acc, test_acc = ensembling(list_logits, c_and_s=args.c_and_s)
+            train_acc, val_acc, test_acc = ensembling(list_logits, c_and_s=args.c_and_s, dataset = args.dataset)
             train_acc_list.append(train_acc)
             val_acc_list.append(val_acc)
             test_acc_list.append(test_acc)

@@ -73,7 +73,7 @@ def parse_args():
     parser.add_argument("--cpu", action="store_true", help="CPU mode. This option overrides --gpu.")
     parser.add_argument("--gpu", type=int, default=0, help="GPU device ID.")
     parser.add_argument("--seed", type=int, default=42, help="seed")
-    parser.add_argument("--n_runs", type=int, default=1, help="running times")
+    parser.add_argument("--n_runs", type=int, default=3, help="running times")
     parser.add_argument("--n_epochs", type=int, default=100, help="number of epochs")     
     parser.add_argument("--eval_epoch", type=int, default=1) 
     parser.add_argument("--gm_lr", type=float, default=0.002, help="learning rate for GM")
@@ -116,7 +116,7 @@ def parse_args():
     # parameters for data and model storage
     parser.add_argument("--gnn_type", type=str, default="RevGAT")    # RevGAT GraphSAGE
     parser.add_argument("--data_folder", type=str, default="../data")
-    parser.add_argument("--dataset", type=str, default="ogbn-arxiv")
+    parser.add_argument("--dataset", type=str, default="ogbn-products")
     parser.add_argument("--task_type", type=str, default="node_cls")
     parser.add_argument("--ckpt_dir", type=str, default='', help="path to load gnn ckpt")
     parser.add_argument("--output_dir", type=str, default=f"out")        
@@ -155,13 +155,14 @@ def parse_args():
     os.makedirs(f"{args.save}/ckpt",exist_ok=True)
     args.no_attn_dst = True
     args.use_labels = True
-    # args.use_gpt_preds = True
-    args.debug = -1
+    args.use_gpt_preds = True
+    args.debug = 1
     # args.proceed = True
-    args.use_external_feat = True
+    # args.use_external_feat = True
     # args.train_idx_cluster = True
     args.deepspeed = None
     args.disable_tqdm = True
+    args.gpt_col = 0
     return args
 
 def save_args(args, dir):
@@ -353,14 +354,24 @@ class TRAIN_GNN():
         # self.args.n_node_feats = self.args.hidden_size
         
         if self.args.debug > 0:
-            debug_idx = torch.arange(0, self.args.debug)
-            self.train_idx = self.train_idx[self.train_idx < self.args.debug]
-            self.val_idx = self.val_idx[self.val_idx < self.args.debug]
-            self.test_idx = self.test_idx[self.test_idx < self.args.debug]
+            if self.args.dataset=='ogbn-arxiv':
+                debug_idx = torch.arange(0, self.args.debug)
+                self.train_idx = self.train_idx[self.train_idx < self.args.debug]
+                self.val_idx = self.val_idx[self.val_idx < self.args.debug]
+                self.test_idx = self.test_idx[self.test_idx < self.args.debug]
+                self.labels = self.labels[:self.args.debug]
+            elif self.args.dataset=='ogbn-products':
+                data_ = torch.load(f'{self.args.data_folder}/ogbn_products_subset.pt')
+                debug_idx = data_.n_id
+                new_idx = torch.arange(0, len(debug_idx))
+                self.train_idx = new_idx[data_.train_mask]
+                self.val_idx = new_idx[data_.val_mask]
+                self.test_idx = new_idx[data_.test_mask]
+                self.labels = self.labels[debug_idx]
+                
             self.split_idx["train"] = self.train_idx
             self.split_idx["valid"] = self.val_idx
             self.split_idx["test"] = self.test_idx
-            self.labels = self.labels[:self.args.debug]
             self.graph = dgl.node_subgraph(self.graph, debug_idx)
         
         if self.args.use_external_feat:
@@ -371,19 +382,20 @@ class TRAIN_GNN():
             )
         elif self.args.use_gpt_preds:
             preds = []
-            with open(f"src/misc/gpt_preds/ogbn-arxiv.csv", "r") as file:
+            with open(f"src/misc/gpt_preds/{self.args.dataset}.csv", "r") as file:
                 reader = csv.reader(file)
                 for row in reader:
                     preds.append([int(i) for i in row])
-            pl = torch.zeros(len(preds), 5, dtype=torch.long)
+                    self.args.gpt_col = max(self.args.gpt_col, len(row))
+            pl = torch.zeros(len(preds), self.args.gpt_col, dtype=torch.long)
             for i, pred in enumerate(preds):
-                pl[i][: len(pred)] = torch.tensor(pred[:5], dtype=torch.long) + 1
+                pl[i][: len(pred)] = torch.tensor(pred[:self.args.gpt_col], dtype=torch.long) + 1
             self.feat_static = pl
             logger.warning(
                 "Loaded node embeddings of shape={} from gpt_preds".format(pl.shape)
             )
             
-            self.args.n_node_feats = self.args.n_gpt_embs * 5
+            self.args.n_node_feats = self.args.n_gpt_embs * self.args.gpt_col
         else:
             self.feat_static = self.graph.ndata["feat"]
             self.args.n_node_feats = self.feat_static.shape[1]
@@ -392,7 +404,6 @@ class TRAIN_GNN():
             )
             
         self.n_node = self.graph.num_nodes()
-        self.args.num_labels = (self.labels.max() + 1).item()
         if self.args.use_labels:
             self.args.n_node_feats += self.args.num_labels
         if self.args.train_idx_cluster:
@@ -404,6 +415,7 @@ class TRAIN_GNN():
             self.model_gnn = RevGAT(
                 self.args,
                 activation=F.relu,
+                gpt_col=self.args.gpt_col,
                 dropout=self.args.dropout,
                 input_drop=self.args.input_drop,
                 attn_drop=self.args.attn_drop,
@@ -418,7 +430,7 @@ class TRAIN_GNN():
                 logger.info(f"Loaded PGM from {self.args.ckpt_dir}")
                 self.model_gnn.convs[-1].reset_parameters()
         elif self.args.gnn_type == "GraphSAGE":
-            print(self.args.n_node_feats)
+            # print(self.args.n_node_feats)
             self.model_gnn = GraphSAGE(
                 in_channels=self.args.n_node_feats,
                 hidden_channels=self.args.n_hidden,
