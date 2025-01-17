@@ -115,8 +115,9 @@ def parse_args():
     
     # parameters for data and model storage
     parser.add_argument("--gnn_type", type=str, default="RevGAT")    # RevGAT GraphSAGE
+    parser.add_argument("--se_reduction", type=int, default=16)
     parser.add_argument("--data_folder", type=str, default="../data")
-    parser.add_argument("--dataset", type=str, default="ogbn-products")
+    parser.add_argument("--dataset", type=str, default="ogbn-arxiv")
     parser.add_argument("--task_type", type=str, default="node_cls")
     parser.add_argument("--ckpt_dir", type=str, default='', help="path to load gnn ckpt")
     parser.add_argument("--output_dir", type=str, default=f"out")        
@@ -156,7 +157,7 @@ def parse_args():
     args.no_attn_dst = True
     args.use_labels = True
     args.use_gpt_preds = True
-    args.debug = 1
+    args.debug = -1
     # args.proceed = True
     # args.use_external_feat = True
     # args.train_idx_cluster = True
@@ -422,7 +423,8 @@ class TRAIN_GNN():
                 edge_drop=self.args.edge_drop,
                 use_attn_dst=not self.args.no_attn_dst,
                 use_symmetric_norm=self.args.use_norm,
-                use_gpt_preds=self.args.use_gpt_preds
+                use_gpt_preds=self.args.use_gpt_preds,
+                se_reduction=self.args.se_reduction
             )
 
             if self.args.ckpt_dir != '' and os.path.exists(self.args.ckpt_dir):

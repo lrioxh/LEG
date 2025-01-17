@@ -366,6 +366,8 @@ class LM_GNN():
         # print(self.get_params()[0])
         # self.feat_static = x_embs
         del trainer, results, x_embs
+        torch.cuda.empty_cache()
+        gc.collect()
         # logger.info(
         #             f'Train/Val/Test loss: {results["train_loss"]:.4f}/{results["valid_loss"]:.4f}/{results["test_loss"]:.4f}\n'
         #             f'Train/Val/Test/Best val/Final test acc: {results["train_acc"]:.4f}/{results["valid_acc"]:.4f}/{results["test_acc"]:.4f}'
@@ -726,7 +728,8 @@ class LM_GNN():
                                 # embs = embs.to(dtype=self.dtype)
                         else:
                             out_lm, embs = self.model_lm(input_ids, attention_mask, return_hidden=True)
-                        
+                        out_lm = out_lm[self.id_in_parent(grad_idx, train_pred_idx)]
+                        del input_ids, attention_mask
                         # gnn
                         if self.args.use_labels:
                             train_labels_idx = set(train_idx.tolist()) - set(train_pred_idx.tolist())
@@ -757,6 +760,7 @@ class LM_GNN():
                                     )
                                 feat[self.id_in_parent(sub_idx, unlabel_idx), -self.args.num_labels:] \
                                     = onehot_labels[unlabel_idx]
+                                del pred
                                 pred = self.model_gnn(graph, feat)
                         del feat, graph
                         if mode == "teacher":
@@ -767,7 +771,7 @@ class LM_GNN():
                                 ) + \
                                 self.custom_train_loss(
                                 self.labels[train_pred_idx],
-                                out_lm[self.id_in_parent(grad_idx, train_pred_idx)] 
+                                out_lm
                                 )
                             # else:
                             #     loss = self.custom_train_loss(
@@ -963,7 +967,7 @@ class LM_GNN():
             if val_acc > best_val_acc:
                 best_val_loss = val_loss
                 best_val_acc = val_acc
-                # final_test_acc = test_acc
+                final_test_acc = test_acc
                 final_pred = pred
                 # if not self.lm_only:
                 # if mode == "teacher":

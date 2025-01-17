@@ -13,7 +13,30 @@ from dgl.utils import expand_as_pair
 from .rev import memgcn
 from .rev.rev_layer import SharedDropout
 
+class SEBlock(nn.Module):
+    def __init__(self, in_channels, reduction=16):
+        super(SEBlock, self).__init__()
+        self.in_channels = in_channels
+        self.reduction = reduction
 
+        # 两个全连接层
+        self.fc1 = nn.Linear(in_channels, in_channels // reduction)
+        self.fc2 = nn.Linear(in_channels // reduction, in_channels)
+
+    def forward(self, x):
+        # Squeeze 操作：全局平均池化
+        b, c, _ = x.size()  # 假设输入是 [batch_size, channels, nodes]
+        y = F.adaptive_avg_pool1d(x, 1)  # [b, c, 1]
+
+        # Excitation 操作
+        y = y.view(b, c)  # 变为 [b, c]
+        y = F.relu(self.fc1(y))  # [b, c/reduction]
+        y = torch.sigmoid(self.fc2(y))  # [b, c]
+
+        # 将通道权重应用于原始特征
+        y = y.view(b, c, 1)  # 变为 [b, c, 1]
+        return x * y  # 按通道加权
+    
 class ElementWiseLinear(nn.Module):
     def __init__(self, size, weight=True, bias=True, inplace=False):
         super().__init__()
@@ -48,6 +71,43 @@ class ElementWiseLinear(nn.Module):
                 x = x + self.bias
         return x
 
+class GATConvSE(nn.Module):
+    def __init__(
+        self,
+        in_feats,
+        out_feats,
+        num_heads=1,
+        feat_drop=0.0,
+        attn_drop=0.0,
+        edge_drop=0.0,
+        negative_slope=0.2,
+        use_attn_dst=True,
+        residual=False,
+        activation=None,
+        allow_zero_in_degree=False,
+        use_symmetric_norm=False,
+        reduction = 16
+    ):
+        super(GATConvSE, self).__init__()
+        self.conv = GATConv(in_feats, out_feats, num_heads, 
+                                feat_drop,
+                                attn_drop,
+                                edge_drop,
+                                negative_slope,
+                                use_attn_dst,
+                                residual,
+                                activation,
+                                allow_zero_in_degree,
+                                use_symmetric_norm
+                                ) 
+        self.se = SEBlock(out_feats, reduction)
+        
+    def forward(self, g, x):
+        x = self.conv(g, x) 
+        x = x.permute(0, 2, 1)
+        x = self.se(x) 
+        x = x.permute(0, 2, 1) 
+        return x
 
 class GATConv(nn.Module):
     def __init__(
@@ -273,6 +333,7 @@ class RevGAT(nn.Module):
         group=2,
         use_gpt_preds=False,
         input_norm=True,
+        se_reduction = 16
     ):
         super().__init__()
         self.in_feats = in_feats
@@ -297,18 +358,33 @@ class RevGAT(nn.Module):
             out_channels = n_heads
 
             if i == 0 or i == n_layers - 1:
-                self.convs.append(
-                    GATConv(
-                        in_hidden,
-                        out_hidden,
-                        num_heads=num_heads,
-                        attn_drop=attn_drop,
-                        edge_drop=edge_drop,
-                        use_attn_dst=use_attn_dst,
-                        use_symmetric_norm=use_symmetric_norm,
-                        residual=True,
+                if se_reduction > 0:
+                    self.convs.append(
+                        GATConvSE(
+                            in_hidden,
+                            out_hidden,
+                            num_heads=num_heads,
+                            attn_drop=attn_drop,
+                            edge_drop=edge_drop,
+                            use_attn_dst=use_attn_dst,
+                            use_symmetric_norm=use_symmetric_norm,
+                            residual=True,
+                            reduction = se_reduction
+                        )
                     )
-                )
+                else:
+                    self.convs.append(
+                        GATConv(
+                            in_hidden,
+                            out_hidden,
+                            num_heads=num_heads,
+                            attn_drop=attn_drop,
+                            edge_drop=edge_drop,
+                            use_attn_dst=use_attn_dst,
+                            use_symmetric_norm=use_symmetric_norm,
+                            residual=True
+                        )
+                    )
             else:
                 Fms = nn.ModuleList()
                 fm = RevGATBlock(
@@ -372,6 +448,8 @@ class RevGAT(nn.Module):
         x = self.dp_last(x)
         x = self.convs[-1](graph, x, self.perms[-1])
 
+        x = self.se2(x)
+        
         x = x.mean(1)
         x = self.bias_last(x)
 

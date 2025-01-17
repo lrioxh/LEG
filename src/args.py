@@ -35,18 +35,18 @@ def parse_args():
     parser.add_argument("--suffix", type=str, default="main")
     parser.add_argument("--cpu", action="store_true", help="CPU mode. This option overrides --gpu.")
     parser.add_argument("--gpu", type=int, default=0, help="GPU device ID.")
-    parser.add_argument("--seed", type=int, default=43, help="seed")
-    parser.add_argument("--n_runs", type=int, default=2, help="running times")
-    parser.add_argument("--ep_blocks", type=int, default=1, help="number of epoch blocks")     
+    parser.add_argument("--seed", type=int, default=41, help="seed")
+    parser.add_argument("--n_runs", type=int, default=3, help="running times")
+    parser.add_argument("--ep_blocks", type=int, default=2, help="number of epoch blocks")     
     parser.add_argument("--ep_gm", type=int, default=30, help="number of epochs for GM only in one block")   
     parser.add_argument("--ep_full", type=int, default=2, help="number of epochs for full tuning in one block")   
     parser.add_argument("--ep_eegm", action="store_true", default=False,  help="end to end first, then gnn")  
     parser.add_argument("--eval_epoch", type=int, default=1) 
-    parser.add_argument("--gm_lr", type=float, default=0.04, help="learning rate for GM")
+    parser.add_argument("--gm_lr", type=float, default=0.008, help="learning rate for GM")
     parser.add_argument("--lm_lr", type=float, default=1e-3, help="learning rate for LM")
     parser.add_argument("--wd", type=float, default=5e-6, help="weight decay")    
     parser.add_argument("--warmup", type=int, default=20, help="epochs for warm up")    
-    parser.add_argument("--wu_lm", type=int, default=4, help="epochs for warmup for LM only")  
+    parser.add_argument("--wu_lm", type=int, default=3, help="epochs for warmup for LM only")  
     parser.add_argument("--loss_reduction", type=str, default='mean', help="Specifies the reduction to apply to the loss output")  
     parser.add_argument("--lm_loss_weight", type=float, default=0.5, help="weight of lm loss in the conbined loss")   
     parser.add_argument(
@@ -62,7 +62,7 @@ def parse_args():
     
     # sampling
     parser.add_argument("--kernel_size", type=int, default=8, help="for trainable node kernel")
-    parser.add_argument("--accumulation_steps", type=int, default=4, help="accumulation_steps")
+    parser.add_argument("--accumulation_steps", type=int, default=3, help="accumulation_steps")
     parser.add_argument("--grad_padding", type=int, default=1, help="padding hop for grad scope, -1 means whole graph")
     parser.add_argument("--grad_k", type=int, default=1, help="Number of nodes sampled per hop, -1 means all neighbours")
     parser.add_argument("--grad_size", type=int, default=16, help="Max Grad Size")
@@ -122,9 +122,9 @@ def parse_args():
     parser.add_argument("--report_to", type=str, default="none")
     
     # parameters for data and model storage
-    parser.add_argument("--model_type", type=str, default="e5-sage")
+    parser.add_argument("--model_type", type=str, default="e5-revgat")
     parser.add_argument("--data_folder", type=str, default="../data")
-    parser.add_argument("--dataset", type=str, default="ogbn-products")
+    parser.add_argument("--dataset", type=str, default="ogbn-arxiv")
     parser.add_argument("--task_type", type=str, default="node_cls")
     parser.add_argument("--ckpt_dir", type=str, default='', help="path to load gnn ckpt")
     parser.add_argument("--output_dir", type=str, default=f"out")        
@@ -179,7 +179,7 @@ def parse_args():
     args.fp16 = True
     args.use_labels = True
     # args.use_gpt_preds = True
-    args.debug = 1
+    args.debug = -1
     # args.proceed = True
     # args.ep_eegm = True
     # args.use_external_feat = True
